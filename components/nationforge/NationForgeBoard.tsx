@@ -12,12 +12,16 @@ import {
 } from "react";
 
 import { consumeGmTextStream } from "@/lib/nationforge/consume-gm-stream";
+import { buildOpeningBriefPlayerMessage } from "@/lib/nationforge/opening-brief-narrative";
 import type { PublicGameSession } from "@/lib/nationforge/public-types";
 import type { Nation } from "@/lib/nationforge/schema";
 
 import NationForgeWizard from "./NationForgeWizard";
 
 const HOST_TOKENS_KEY = "nationforge-host-tokens";
+
+/** Dedupes auto-opening GM beat (avoids Strict Mode double-invoke sending twice). */
+let openingBeatAutoKeySent = "";
 const POLL_MS = 2500;
 
 function textFromAssistantMessage(m: UIMessage): string {
@@ -151,6 +155,25 @@ export default function NationForgeBoard() {
       session.nations.length > 0,
   );
 
+  /** First GM prose exists (or we are mid-stream). */
+  const introDelivered = Boolean(
+    lastGmChapter.trim().length > 0 || gmStreamText.trim().length > 0,
+  );
+
+  const showTurnComposer = Boolean(
+    session &&
+      session.gameStarted &&
+      !waitingForTableOpen &&
+      introDelivered,
+  );
+
+  const isOpeningBeatSeat = Boolean(
+    session &&
+      urlToken &&
+      session.viewerNationId &&
+      session.viewerNationId === session.activeNationId,
+  );
+
   const canSendTurn = useMemo(() => {
     if (!session?.gameStarted || !narrative.trim()) return false;
     if (!povNation?.forgeComplete) return false;
@@ -258,6 +281,71 @@ export default function NationForgeBoard() {
     load,
   ]);
 
+  const submitOpeningBrief = useCallback(async () => {
+    if (!sessionId || !session) return;
+    const opener = session.nations.find((n) => n.id === session.activeNationId);
+    if (!opener?.forgeComplete) return;
+    setBusy(true);
+    setError(null);
+    setGmStreamText("");
+    try {
+      const res = await fetch("/api/nationforge/turn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          povNationId: session.activeNationId,
+          narrative: buildOpeningBriefPlayerMessage(opener),
+          orientationRequest: true,
+        }),
+      });
+      if (res.status === 429) {
+        const j = (await res.json()) as { retryAfterMs?: number };
+        throw new Error(
+          `Rate limited. Retry after ~${Math.ceil((j.retryAfterMs ?? 5000) / 1000)}s`,
+        );
+      }
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || res.statusText);
+      }
+      await consumeGmTextStream(res, (d) => {
+        setGmStreamText((x) => x + d);
+      });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [sessionId, session, load]);
+
+  useEffect(() => {
+    if (!session || !urlToken || !myNation?.forgeComplete) return;
+    if (waitingForTableOpen) return;
+    if (!session.gameStarted || !session.crisis) return;
+    if (lastGmChapter.trim() || gmStreamText.trim()) return;
+    if (session.phase === "gm_running") return;
+    if (!session.viewerNationId || session.viewerNationId !== session.activeNationId) {
+      return;
+    }
+    const dedupeKey = `${session.id}:${session.crisis.id}`;
+    if (openingBeatAutoKeySent === dedupeKey) return;
+    openingBeatAutoKeySent = dedupeKey;
+    void (async () => {
+      await Promise.resolve();
+      await submitOpeningBrief();
+    })();
+  }, [
+    session,
+    urlToken,
+    myNation?.forgeComplete,
+    waitingForTableOpen,
+    lastGmChapter,
+    gmStreamText,
+    submitOpeningBrief,
+  ]);
+
   if (!session) {
     return <div className="p-8 text-center text-sm text-zinc-500">Loading…</div>;
   }
@@ -361,10 +449,61 @@ export default function NationForgeBoard() {
         </div>
       ) : null}
 
-      {crisis ? (
+      {session.gameStarted &&
+      !waitingForTableOpen &&
+      crisis &&
+      !introDelivered &&
+      urlToken &&
+      myNation?.forgeComplete ? (
+        <section className="rounded-2xl border border-amber-200/90 bg-gradient-to-b from-amber-50/95 to-white px-5 py-6 shadow-sm dark:border-amber-900/40 dark:from-amber-950/40 dark:to-zinc-950">
+          <p className="text-xs font-medium uppercase tracking-wide text-amber-900 dark:text-amber-200">
+            You&apos;re in
+          </p>
+          <h2 className="mt-1 text-xl font-semibold text-zinc-900 dark:text-zinc-50">
+            {myNation.name}
+          </h2>
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+            The table is opening with a GM-written orientation to your forged
+            nation — your stats and build below are what the sim locked in. The
+            Year-1 crisis shows up right after this beat so you can answer it in
+            plain language.
+          </p>
+          <div className="mt-4 ring-2 ring-amber-400/30 ring-offset-2 ring-offset-amber-50 dark:ring-amber-700/40 dark:ring-offset-zinc-950">
+            <NationCard nation={myNation} />
+          </div>
+          {busy ? (
+            <p className="mt-4 text-sm font-medium text-amber-950 dark:text-amber-100">
+              GM is drafting your opening scene…
+            </p>
+          ) : null}
+          {error ? (
+            <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>
+          ) : null}
+          {isOpeningBeatSeat && error ? (
+            <button
+              type="button"
+              className="mt-4 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-950 dark:border-amber-800 dark:bg-zinc-950 dark:text-amber-100"
+              onClick={() => {
+                openingBeatAutoKeySent = "";
+                void submitOpeningBrief();
+              }}
+            >
+              Try opening again
+            </button>
+          ) : null}
+          {!isOpeningBeatSeat ? (
+            <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
+              The active seat is opening the chronicle — this page will refresh
+              with the GM&apos;s text shortly.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
+      {crisis && introDelivered ? (
         <section className="rounded-2xl border border-violet-200/80 bg-gradient-to-b from-violet-50/90 to-white px-5 py-5 shadow-sm dark:border-violet-900/40 dark:from-violet-950/40 dark:to-zinc-950">
           <p className="text-xs font-medium uppercase tracking-wide text-violet-700 dark:text-violet-300">
-            Right now
+            Year one — your move
           </p>
           <p className="mt-2 whitespace-pre-wrap text-base leading-relaxed text-zinc-900 dark:text-zinc-100">
             {crisis.prompt}
@@ -401,12 +540,15 @@ export default function NationForgeBoard() {
         </section>
       ) : (
         <p className="text-center text-sm text-zinc-500">
-          {session.gameStarted
-            ? "Write your opening beat below. After each turn, more of the story appears here."
-            : "Once every claimed nation finishes the 100-point forge, the first crisis and storyline open here."}
+          {session.gameStarted && !waitingForTableOpen && crisis && !introDelivered
+            ? "Your opening scene streams above when the GM finishes."
+            : session.gameStarted
+              ? "Write your beat below after the opening. Each send adds to the chronicle."
+              : "Once every claimed nation finishes the 100-point forge, the chronicle opens here."}
         </p>
       )}
 
+      {showTurnComposer ? (
       <section className="rounded-2xl border border-zinc-200 bg-zinc-50/50 px-5 py-5 dark:border-zinc-700 dark:bg-zinc-900/40">
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[12rem] flex-1">
@@ -550,6 +692,7 @@ export default function NationForgeBoard() {
           {busy ? "GM is writing the next beat…" : "Send to GM"}
         </button>
       </section>
+      ) : null}
 
       <details className="rounded-xl border border-zinc-200 dark:border-zinc-700">
         <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">

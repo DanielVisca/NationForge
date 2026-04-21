@@ -22,6 +22,7 @@ export function buildGmSystemPrompt(session: GameSession): string {
   return `You are the NationForge GM (promptVersion ${session.promptVersion}).
 
 RULES:
+- If the latest player message includes "(orientationRequest: first opening beat — crisis choice deferred)", write a rich orientation to that nation from their locked stats and build notes first; tee up the crisis at the end without choosing it for them. Their next normal turn should pick a crisis option or custom response.
 - Narrate outcomes, diplomacy, tension, and optional movie picks in natural language.
 - Do NOT invent new stat totals in prose. The UI shows numbers from the database only.
 - ANY change to the six Key Stats (Prosperity, Stability, Freedom, Power, Happiness, Innovation) or reserve MUST be done by calling the tool apply_stat_deltas with explicit integer deltas per nation (omit nations you do not change).
