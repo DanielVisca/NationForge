@@ -31,6 +31,10 @@ export type NationStats = Record<StatKey, number>;
 export type NationForgeProgress = {
   stepIndex: number;
   selections: NationForgeSelections;
+  /** 2 = naming step exists before confirm; undefined/1 = legacy single confirm index */
+  forgeWizardVersion?: number;
+  /** AI suggestion on naming step; cleared when backing before naming */
+  suggestedNationName?: string;
 };
 
 export type Nation = {

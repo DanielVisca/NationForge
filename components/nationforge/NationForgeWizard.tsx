@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   budgetForCurrentStep,
@@ -30,6 +30,7 @@ const STEP_HEADLINE: Record<ForgeStepId, string> = {
   demographicsAddons: "Demographics add-ons (optional)",
   cultural: "Cultural orientation",
   environment: "Environment & sustainability",
+  naming: "Name your nation",
   confirm: "Review & forge",
 };
 
@@ -63,7 +64,9 @@ export default function NationForgeWizard({
   const spentTotal = useMemo(() => computeSpend(selections), [selections]);
 
   const spentEarlier = useMemo(() => {
-    if (!stepId || stepId === "confirm") return spentTotal;
+    if (!stepId || stepId === "confirm" || stepId === "naming") {
+      return spentTotal;
+    }
     return computeSpendExcludingStep(selections, stepId);
   }, [selections, stepId, spentTotal]);
 
@@ -73,7 +76,12 @@ export default function NationForgeWizard({
   }, [selections, stepId]);
 
   const currentPickId = useMemo(() => {
-    if (!stepId || stepId === "confirm" || stepId === "demographicsAddons") {
+    if (
+      !stepId ||
+      stepId === "confirm" ||
+      stepId === "naming" ||
+      stepId === "demographicsAddons"
+    ) {
       return undefined;
     }
     return currentSingleChoiceOnStep(stepId, selections);
@@ -121,15 +129,14 @@ export default function NationForgeWizard({
         NationForge · 100-point builder
       </p>
       <h2 className="mt-2 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">
-        {nation.name}
+        {stepId === "naming" ? STEP_HEADLINE.naming : nation.name}
       </h2>
       <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-        One section at a time. You always see{" "}
+        One section at a time for your build;{" "}
         <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-          points remaining
-        </span>
-        ; later sections stay hidden until you reach them. Every pillar also
-        has an{" "}
+          naming comes last
+        </span>{" "}
+        with an AI-suggested name you can overwrite. Every pillar also has an{" "}
         <span className="font-semibold text-zinc-800 dark:text-zinc-200">
           underfunded (0 pt)
         </span>{" "}
@@ -148,6 +155,19 @@ export default function NationForgeWizard({
             </p>
             <p className="mt-1 text-xs text-amber-900/80 dark:text-amber-200/90">
               Budget {FORGE_POINT_BUDGET} · Total spend {spentTotal}
+            </p>
+          </>
+        ) : stepId === "naming" ? (
+          <>
+            <p className="text-xs text-amber-950 dark:text-amber-100">
+              Build locked in — reserve after spend
+            </p>
+            <p className="mt-1 text-4xl font-bold tabular-nums text-amber-950 dark:text-amber-50">
+              {pointsLeft}
+            </p>
+            <p className="mt-1 text-xs text-amber-900/80 dark:text-amber-200/90">
+              Total spend {spentTotal} · Next you name the polity, then review &
+              forge
             </p>
           </>
         ) : stepId === "demographicsAddons" ? (
@@ -194,7 +214,16 @@ export default function NationForgeWizard({
         <h3 className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
           {STEP_HEADLINE[stepId]}
         </h3>
-        {currentPickId && stepId !== "confirm" && stepId !== "demographicsAddons" ? (
+        {stepId === "naming" ? (
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+            We suggest a name from your build — edit freely, or refresh for
+            another option before you review and forge.
+          </p>
+        ) : null}
+        {currentPickId &&
+        stepId !== "confirm" &&
+        stepId !== "naming" &&
+        stepId !== "demographicsAddons" ? (
           <p className="mt-2 text-sm text-emerald-800 dark:text-emerald-200">
             Highlighted option below is your saved choice — pick another to replace
             it, or use Back to undo later pillars.
@@ -242,7 +271,9 @@ export default function NationForgeWizard({
         <p className="mt-4 text-sm text-red-600">{preview.error}</p>
       ) : null}
 
-      {stepId !== "confirm" && stepId !== "demographicsAddons" ? (
+      {stepId !== "confirm" &&
+      stepId !== "naming" &&
+      stepId !== "demographicsAddons" ? (
         <ul className="mt-6 space-y-2">
           {choicesOrderedForBudget(stepId, budgetHere).map((c) => {
             const affordable = c.cost <= budgetHere;
@@ -290,6 +321,18 @@ export default function NationForgeWizard({
         </ul>
       ) : null}
 
+      {stepId === "naming" && progress ? (
+        <NamingStepSection
+          sessionId={sessionId}
+          token={token}
+          suggested={progress.suggestedNationName}
+          provisionalLabel={nation.name}
+          onRefresh={onDone}
+          postForge={postForge}
+          busy={busy}
+        />
+      ) : null}
+
       {stepId === "demographicsAddons" && progress ? (
         <DemographicsAddonsPanel
           key={`addons-${progress.stepIndex}-${(progress.selections.demographicsAddons ?? []).join(",")}`}
@@ -330,6 +373,130 @@ export default function NationForgeWizard({
             </p>
           )
         : null}
+    </div>
+  );
+}
+
+function NamingStepSection({
+  sessionId,
+  token,
+  suggested,
+  provisionalLabel,
+  onRefresh,
+  postForge,
+  busy,
+}: {
+  sessionId: string;
+  token: string;
+  suggested?: string;
+  provisionalLabel: string;
+  onRefresh: () => Promise<void>;
+  postForge: (body: Record<string, unknown>) => Promise<void>;
+  busy: boolean;
+}) {
+  const [draft, setDraft] = useState("");
+  const [suggestionBusy, setSuggestionBusy] = useState(false);
+  const [localErr, setLocalErr] = useState<string | null>(null);
+  const userEdited = useRef(false);
+
+  const requestSuggestion = useCallback(
+    async (force: boolean) => {
+      if (force) userEdited.current = false;
+      setSuggestionBusy(true);
+      setLocalErr(null);
+      try {
+        const res = await fetch(`/api/nationforge/sessions/${sessionId}/forge`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token,
+            type: "loadNameSuggestion",
+            ...(force ? { force: true } : {}),
+          }),
+        });
+        const j = (await res.json()) as { ok?: boolean; error?: string };
+        if (!res.ok) throw new Error(j.error ?? res.statusText);
+        await onRefresh();
+      } catch (e) {
+        setLocalErr(e instanceof Error ? e.message : "Suggestion failed");
+      } finally {
+        setSuggestionBusy(false);
+      }
+    },
+    [sessionId, token, onRefresh],
+  );
+
+  useEffect(() => {
+    if (suggested) return;
+    let cancelled = false;
+    void (async () => {
+      await Promise.resolve();
+      if (cancelled) return;
+      await requestSuggestion(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [suggested, requestSuggestion]);
+
+  useEffect(() => {
+    if (suggested && !userEdited.current) {
+      setDraft(suggested);
+    }
+  }, [suggested]);
+
+  const trimmed = draft.trim();
+  const canContinue =
+    trimmed.length >= 1 && trimmed.length <= 80 && !busy && !suggestionBusy;
+
+  return (
+    <div className="mt-6 space-y-4">
+      <p className="text-xs text-zinc-500">
+        Provisional seat label on the table:{" "}
+        <span className="font-medium text-zinc-700 dark:text-zinc-300">
+          {provisionalLabel}
+        </span>
+      </p>
+      <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+        Nation name
+        <input
+          className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+          value={draft}
+          onChange={(e) => {
+            userEdited.current = true;
+            setDraft(e.target.value);
+          }}
+          placeholder={
+            suggestionBusy && !suggested
+              ? "Generating suggestion…"
+              : "Your polity’s name"
+          }
+          maxLength={80}
+          disabled={busy || suggestionBusy}
+          autoComplete="off"
+        />
+      </label>
+      {localErr ? (
+        <p className="text-sm text-red-600 dark:text-red-400">{localErr}</p>
+      ) : null}
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <button
+          type="button"
+          disabled={busy || suggestionBusy}
+          className="rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-800 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-200"
+          onClick={() => void requestSuggestion(true)}
+        >
+          {suggestionBusy ? "…" : "Refresh suggestion"}
+        </button>
+        <button
+          type="button"
+          disabled={!canContinue}
+          className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+          onClick={() => void postForge({ type: "submitNationName", name: trimmed })}
+        >
+          Continue to review
+        </button>
+      </div>
     </div>
   );
 }

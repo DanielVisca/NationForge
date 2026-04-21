@@ -1,6 +1,31 @@
 import type { UIMessage } from "ai";
 
+import {
+  FORGE_STEP_IDS,
+  isForgeSelectionsComplete,
+} from "./nation-forge-catalog";
 import type { GameSession, Nation, NationForgeProgress } from "./schema";
+
+const LEGACY_CONFIRM_STEP_INDEX = 11;
+const NEW_CONFIRM_STEP_INDEX = FORGE_STEP_IDS.indexOf("confirm");
+
+/** Old saves used confirm at index 11; bump to new confirm after inserting naming. */
+function migrateForgeWizardProgress(fp: NationForgeProgress): NationForgeProgress {
+  if (fp.forgeWizardVersion === 2) return fp;
+  if (
+    fp.forgeWizardVersion === undefined &&
+    fp.stepIndex === LEGACY_CONFIRM_STEP_INDEX
+  ) {
+    if (isForgeSelectionsComplete(fp.selections)) {
+      return {
+        ...fp,
+        stepIndex: NEW_CONFIRM_STEP_INDEX,
+        forgeWizardVersion: 2,
+      };
+    }
+  }
+  return { ...fp, forgeWizardVersion: 2 };
+}
 
 function hasAssistantReply(messages: UIMessage[]): boolean {
   return messages.some((m) => {
@@ -16,9 +41,14 @@ export function normalizeNation(n: Nation): Nation {
   if (forgeComplete) {
     return { ...n, forgeComplete: true, forgeProgress: null };
   }
-  const fp: NationForgeProgress =
+  const raw: NationForgeProgress =
     n.forgeProgress ??
-    ({ stepIndex: 0, selections: { demographicsAddons: [] } } satisfies NationForgeProgress);
+    ({
+      stepIndex: 0,
+      selections: { demographicsAddons: [] },
+      forgeWizardVersion: 2,
+    } satisfies NationForgeProgress);
+  const fp = migrateForgeWizardProgress(raw);
   const selections = { ...fp.selections };
   if (!Array.isArray(selections.demographicsAddons)) {
     selections.demographicsAddons = [];
@@ -26,7 +56,12 @@ export function normalizeNation(n: Nation): Nation {
   return {
     ...n,
     forgeComplete: false,
-    forgeProgress: { stepIndex: fp.stepIndex, selections },
+    forgeProgress: {
+      stepIndex: fp.stepIndex,
+      selections,
+      suggestedNationName: fp.suggestedNationName,
+      forgeWizardVersion: fp.forgeWizardVersion ?? 2,
+    },
   };
 }
 

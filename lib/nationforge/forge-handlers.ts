@@ -8,18 +8,21 @@ import {
   computeSpend,
   FORGE_POINT_BUDGET,
   FORGE_STEP_IDS,
+  isForgeSelectionsComplete,
   SINGLE_STEP_SELECTION_KEY,
   stepIdAtIndex,
 } from "./nation-forge-catalog";
 import { resolveForgeToNation } from "./nation-forge-resolve";
+import { suggestNationNameOrHeuristic } from "./suggest-nation-name";
 import { migrateSession, normalizeNation } from "./session-migrate";
-import type { Crisis, GameSession, Nation } from "./schema";
+import type { Crisis, GameSession, Nation, NationForgeProgress } from "./schema";
 
 export type ForgeClientAction =
   | { type: "pick"; choiceId: string }
   | { type: "setAddons"; ids: string[] }
   | { type: "back" }
-  | { type: "finalize" };
+  | { type: "finalize" }
+  | { type: "submitNationName"; name: string };
 
 function starterCrisisForNations(nationIds: string[]): Crisis {
   const n = nationIds.length;
@@ -82,17 +85,54 @@ export function applyForgeActionToSession(
     return { ok: false, error: "Invalid forge step." };
   }
 
+  const namingIdx = FORGE_STEP_IDS.indexOf("naming");
+
   if (action.type === "back") {
     const nextIndex = Math.max(0, progress.stepIndex - 1);
     const selections = clearForgeSelectionsAfterStepIndex(
       progress.selections,
       nextIndex,
     );
+    const nextProgress: NationForgeProgress = {
+      ...progress,
+      stepIndex: nextIndex,
+      selections,
+      forgeWizardVersion: progress.forgeWizardVersion ?? 2,
+    };
+    if (nextIndex < namingIdx) {
+      delete (nextProgress as unknown as Record<string, unknown>).suggestedNationName;
+    }
     const nations = [...s.nations];
     nations[nationIndex] = normalizeNation({
       ...nation,
       forgeComplete: false,
-      forgeProgress: { stepIndex: nextIndex, selections },
+      forgeProgress: nextProgress,
+    });
+    return { ok: true, session: { ...s, nations } };
+  }
+
+  if (action.type === "submitNationName") {
+    if (stepId !== "naming") {
+      return { ok: false, error: "Name your nation on the naming step." };
+    }
+    const name = action.name.trim().slice(0, 80);
+    if (!name) {
+      return { ok: false, error: "Nation name cannot be empty." };
+    }
+    if (!isForgeSelectionsComplete(progress.selections)) {
+      return { ok: false, error: "Complete all build selections first." };
+    }
+    const confirmIdx = FORGE_STEP_IDS.indexOf("confirm");
+    const nations = [...s.nations];
+    nations[nationIndex] = normalizeNation({
+      ...nation,
+      name,
+      forgeComplete: false,
+      forgeProgress: {
+        stepIndex: confirmIdx,
+        selections: progress.selections,
+        forgeWizardVersion: progress.forgeWizardVersion ?? 2,
+      },
     });
     return { ok: true, session: { ...s, nations } };
   }
@@ -142,14 +182,17 @@ export function applyForgeActionToSession(
     }
     const maxStep = FORGE_STEP_IDS.length - 1;
     const nextStepIndex = Math.min(progress.stepIndex + 1, maxStep);
+    const nextProgress: NationForgeProgress = {
+      ...progress,
+      stepIndex: nextStepIndex,
+      selections: nextSelections,
+      forgeWizardVersion: progress.forgeWizardVersion ?? 2,
+    };
     const nations = [...s.nations];
     nations[nationIndex] = normalizeNation({
       ...nation,
       forgeComplete: false,
-      forgeProgress: {
-        stepIndex: nextStepIndex,
-        selections: nextSelections,
-      },
+      forgeProgress: nextProgress,
     });
     return { ok: true, session: { ...s, nations } };
   }
@@ -157,6 +200,9 @@ export function applyForgeActionToSession(
   if (action.type === "pick") {
     if (stepId === "confirm") {
       return { ok: false, error: "Use finalize on the last step." };
+    }
+    if (stepId === "naming") {
+      return { ok: false, error: "Use submitNationName on the naming step." };
     }
     if (stepId === "demographicsAddons") {
       return {
@@ -179,19 +225,60 @@ export function applyForgeActionToSession(
     }
     const maxStep = FORGE_STEP_IDS.length - 1;
     const nextStepIndex = Math.min(progress.stepIndex + 1, maxStep);
+    const nextProgress: NationForgeProgress = {
+      ...progress,
+      stepIndex: nextStepIndex,
+      selections: nextSelections,
+      forgeWizardVersion: progress.forgeWizardVersion ?? 2,
+    };
+    if (nextStepIndex === namingIdx) {
+      delete (nextProgress as unknown as Record<string, unknown>).suggestedNationName;
+    }
     const nations = [...s.nations];
     nations[nationIndex] = normalizeNation({
       ...nation,
       forgeComplete: false,
-      forgeProgress: {
-        stepIndex: nextStepIndex,
-        selections: nextSelections,
-      },
+      forgeProgress: nextProgress,
     });
     return { ok: true, session: { ...s, nations } };
   }
 
   return { ok: false, error: "Unsupported action." };
+}
+
+export async function applyLoadNameSuggestionToSession(
+  session: GameSession,
+  nationIndex: number,
+  force: boolean,
+): Promise<{ ok: true; session: GameSession } | { ok: false; error: string }> {
+  const s = migrateSession(session);
+  const nation = s.nations[nationIndex];
+  if (!nation || nation.forgeComplete || !nation.forgeProgress) {
+    return { ok: false, error: "Nation is not in forge mode." };
+  }
+  const progress = nation.forgeProgress;
+  const stepId = stepIdAtIndex(progress.stepIndex);
+  if (stepId !== "naming") {
+    return { ok: false, error: "Name suggestion is only available on the naming step." };
+  }
+  if (!isForgeSelectionsComplete(progress.selections)) {
+    return { ok: false, error: "Complete all build selections first." };
+  }
+  const suggested =
+    !force && progress.suggestedNationName
+      ? progress.suggestedNationName
+      : await suggestNationNameOrHeuristic(progress.selections);
+  const nations = [...s.nations];
+  nations[nationIndex] = normalizeNation({
+    ...nation,
+    forgeComplete: false,
+    forgeProgress: {
+      ...progress,
+      suggestedNationName: suggested,
+      forgeWizardVersion: progress.forgeWizardVersion ?? 2,
+    },
+  });
+  return { ok: true, session: { ...s, nations } };
 }
 
 export function getForgeNationByToken(

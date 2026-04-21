@@ -96,15 +96,13 @@ export async function registerNation(
   }
 
   const trimmed = displayName.trim().slice(0, 80);
-  if (!trimmed) {
-    return { ok: false, error: "Display name is required." };
-  }
-
   const nationId = randomUUID();
   const token = randomUUID();
+  const provisionalName = trimmed || `Unnamed seat ${nationId.slice(0, 4)}`;
+
   const nation: Nation = {
     id: nationId,
-    name: trimmed,
+    name: provisionalName,
     buildNotes: "Nation forge in progress — finish the builder to take turns.",
     stats: defaultStats(),
     reserve: 0,
@@ -112,6 +110,7 @@ export async function registerNation(
     forgeProgress: {
       stepIndex: 0,
       selections: { demographicsAddons: [] },
+      forgeWizardVersion: 2,
     },
   };
 
@@ -137,7 +136,7 @@ export async function registerNation(
     sessionId,
     nationId,
     token,
-    name: trimmed,
+    name: provisionalName,
   };
 }
 

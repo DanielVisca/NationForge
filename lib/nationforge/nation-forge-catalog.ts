@@ -17,6 +17,7 @@ export const FORGE_STEP_IDS = [
   "demographicsAddons",
   "cultural",
   "environment",
+  "naming",
   "confirm",
 ] as const;
 
@@ -186,6 +187,7 @@ const CHOICE_INDEX: Record<ForgeStepId, ForgeChoice[] | null> = {
   demographicsAddons: DEMO_ADDONS,
   cultural: CULTURAL,
   environment: ENVIRONMENT,
+  naming: null,
   confirm: null,
 };
 
@@ -237,9 +239,9 @@ export function computeSpend(s: NationForgeSelections): number {
   return total;
 }
 
-/** NationForgeSelections field for each single-choice step (not add-ons, not confirm). */
+/** NationForgeSelections field for each single-choice step (not add-ons, not confirm/naming). */
 export const SINGLE_STEP_SELECTION_KEY: Record<
-  Exclude<ForgeStepId, "confirm" | "demographicsAddons">,
+  Exclude<ForgeStepId, "confirm" | "demographicsAddons" | "naming">,
   keyof NationForgeSelections
 > = {
   government: "government",
@@ -259,7 +261,7 @@ export function computeSpendExcludingStep(
   s: NationForgeSelections,
   stepId: ForgeStepId,
 ): number {
-  if (stepId === "confirm") return computeSpend(s);
+  if (stepId === "confirm" || stepId === "naming") return computeSpend(s);
   if (stepId === "demographicsAddons") {
     return computeSpend({ ...s, demographicsAddons: [] });
   }
@@ -275,7 +277,7 @@ export function budgetForCurrentStep(
   s: NationForgeSelections,
   stepId: ForgeStepId,
 ): number {
-  if (stepId === "confirm") {
+  if (stepId === "confirm" || stepId === "naming") {
     return Math.max(0, FORGE_POINT_BUDGET - computeSpend(s));
   }
   return Math.max(0, FORGE_POINT_BUDGET - computeSpendExcludingStep(s, stepId));
@@ -285,7 +287,9 @@ export function currentSingleChoiceOnStep(
   stepId: ForgeStepId,
   s: NationForgeSelections,
 ): string | undefined {
-  if (stepId === "confirm" || stepId === "demographicsAddons") return undefined;
+  if (stepId === "confirm" || stepId === "naming" || stepId === "demographicsAddons") {
+    return undefined;
+  }
   const key = SINGLE_STEP_SELECTION_KEY[stepId];
   const v = s[key];
   return typeof v === "string" && v ? v : undefined;
@@ -303,7 +307,7 @@ export function clearForgeSelectionsAfterStepIndex(
   const loose = out as unknown as Record<string, unknown>;
   for (let i = lastKeptStepIndex + 1; i < FORGE_STEP_IDS.length; i++) {
     const sid = FORGE_STEP_IDS[i];
-    if (!sid || sid === "confirm") continue;
+    if (!sid || sid === "confirm" || sid === "naming") continue;
     if (sid === "demographicsAddons") {
       out.demographicsAddons = [];
     } else {
