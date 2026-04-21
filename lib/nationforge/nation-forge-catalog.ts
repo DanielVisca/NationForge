@@ -237,6 +237,86 @@ export function computeSpend(s: NationForgeSelections): number {
   return total;
 }
 
+/** NationForgeSelections field for each single-choice step (not add-ons, not confirm). */
+export const SINGLE_STEP_SELECTION_KEY: Record<
+  Exclude<ForgeStepId, "confirm" | "demographicsAddons">,
+  keyof NationForgeSelections
+> = {
+  government: "government",
+  economy: "economy",
+  labor: "labor",
+  military: "military",
+  education: "education",
+  infrastructure: "infrastructure",
+  foreignPolicy: "foreignPolicy",
+  demographics: "demographics",
+  cultural: "cultural",
+  environment: "environment",
+};
+
+/** Spend if this step's choice (or add-on list) were blank — for re-picking & budget UI. */
+export function computeSpendExcludingStep(
+  s: NationForgeSelections,
+  stepId: ForgeStepId,
+): number {
+  if (stepId === "confirm") return computeSpend(s);
+  if (stepId === "demographicsAddons") {
+    return computeSpend({ ...s, demographicsAddons: [] });
+  }
+  const key = SINGLE_STEP_SELECTION_KEY[stepId];
+  const copy = { ...s, demographicsAddons: [...(s.demographicsAddons ?? [])] };
+  const loose = copy as unknown as Record<string, unknown>;
+  delete loose[key as string];
+  return computeSpend(copy);
+}
+
+/** Points available for the choice on this step (same pick can be replaced without double-counting). */
+export function budgetForCurrentStep(
+  s: NationForgeSelections,
+  stepId: ForgeStepId,
+): number {
+  if (stepId === "confirm") {
+    return Math.max(0, FORGE_POINT_BUDGET - computeSpend(s));
+  }
+  return Math.max(0, FORGE_POINT_BUDGET - computeSpendExcludingStep(s, stepId));
+}
+
+export function currentSingleChoiceOnStep(
+  stepId: ForgeStepId,
+  s: NationForgeSelections,
+): string | undefined {
+  if (stepId === "confirm" || stepId === "demographicsAddons") return undefined;
+  const key = SINGLE_STEP_SELECTION_KEY[stepId];
+  const v = s[key];
+  return typeof v === "string" && v ? v : undefined;
+}
+
+/** After going Back to `lastKeptStepIndex`, drop all picks from later steps so spend matches the UI. */
+export function clearForgeSelectionsAfterStepIndex(
+  selections: NationForgeSelections,
+  lastKeptStepIndex: number,
+): NationForgeSelections {
+  const out: NationForgeSelections = {
+    ...selections,
+    demographicsAddons: [...(selections.demographicsAddons ?? [])],
+  };
+  const loose = out as unknown as Record<string, unknown>;
+  for (let i = lastKeptStepIndex + 1; i < FORGE_STEP_IDS.length; i++) {
+    const sid = FORGE_STEP_IDS[i];
+    if (!sid || sid === "confirm") continue;
+    if (sid === "demographicsAddons") {
+      out.demographicsAddons = [];
+    } else {
+      const key = SINGLE_STEP_SELECTION_KEY[sid];
+      delete loose[key as string];
+    }
+  }
+  if (!out.demographicsAddons?.length) {
+    out.demographicsAddons = [];
+  }
+  return out;
+}
+
 export function remainingPoints(s: NationForgeSelections): number {
   return FORGE_POINT_BUDGET - computeSpend(s);
 }

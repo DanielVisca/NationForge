@@ -4,11 +4,11 @@ import { randomUUID } from "node:crypto";
 
 import {
   choiceById,
+  clearForgeSelectionsAfterStepIndex,
   computeSpend,
   FORGE_POINT_BUDGET,
   FORGE_STEP_IDS,
-  type ForgeStepId,
-  type NationForgeSelections,
+  SINGLE_STEP_SELECTION_KEY,
   stepIdAtIndex,
 } from "./nation-forge-catalog";
 import { resolveForgeToNation } from "./nation-forge-resolve";
@@ -20,22 +20,6 @@ export type ForgeClientAction =
   | { type: "setAddons"; ids: string[] }
   | { type: "back" }
   | { type: "finalize" };
-
-const STEP_KEY: Record<
-  Exclude<ForgeStepId, "confirm" | "demographicsAddons">,
-  keyof NationForgeSelections
-> = {
-  government: "government",
-  economy: "economy",
-  labor: "labor",
-  military: "military",
-  education: "education",
-  infrastructure: "infrastructure",
-  foreignPolicy: "foreignPolicy",
-  demographics: "demographics",
-  cultural: "cultural",
-  environment: "environment",
-};
 
 function starterCrisisForNations(nationIds: string[]): Crisis {
   const n = nationIds.length;
@@ -100,11 +84,15 @@ export function applyForgeActionToSession(
 
   if (action.type === "back") {
     const nextIndex = Math.max(0, progress.stepIndex - 1);
+    const selections = clearForgeSelectionsAfterStepIndex(
+      progress.selections,
+      nextIndex,
+    );
     const nations = [...s.nations];
     nations[nationIndex] = normalizeNation({
       ...nation,
       forgeComplete: false,
-      forgeProgress: { ...progress, stepIndex: nextIndex },
+      forgeProgress: { stepIndex: nextIndex, selections },
     });
     return { ok: true, session: { ...s, nations } };
   }
@@ -176,7 +164,7 @@ export function applyForgeActionToSession(
         error: "Use setAddons with your selected add-ons for this step.",
       };
     }
-    const key = STEP_KEY[stepId];
+    const key = SINGLE_STEP_SELECTION_KEY[stepId];
     const choice = choiceById(stepId, action.choiceId);
     if (!choice) {
       return { ok: false, error: "Unknown choice for this step." };

@@ -4,8 +4,12 @@ import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
 import {
+  budgetForCurrentStep,
+  choiceById,
   choicesOrderedForBudget,
   computeSpend,
+  computeSpendExcludingStep,
+  currentSingleChoiceOnStep,
   FORGE_POINT_BUDGET,
   FORGE_STEP_IDS,
   type ForgeStepId,
@@ -51,11 +55,31 @@ export default function NationForgeWizard({
     return FORGE_STEP_IDS[progress.stepIndex];
   }, [progress]);
 
-  const spent = useMemo(
-    () => computeSpend(progress?.selections ?? {}),
-    [progress?.selections],
+  const selections = useMemo(
+    (): NationForgeSelections => progress?.selections ?? {},
+    [progress],
   );
-  const pointsLeft = FORGE_POINT_BUDGET - spent;
+
+  const spentTotal = useMemo(() => computeSpend(selections), [selections]);
+
+  const spentEarlier = useMemo(() => {
+    if (!stepId || stepId === "confirm") return spentTotal;
+    return computeSpendExcludingStep(selections, stepId);
+  }, [selections, stepId, spentTotal]);
+
+  const budgetHere = useMemo(() => {
+    if (!stepId) return FORGE_POINT_BUDGET;
+    return budgetForCurrentStep(selections, stepId);
+  }, [selections, stepId]);
+
+  const currentPickId = useMemo(() => {
+    if (!stepId || stepId === "confirm" || stepId === "demographicsAddons") {
+      return undefined;
+    }
+    return currentSingleChoiceOnStep(stepId, selections);
+  }, [stepId, selections]);
+
+  const pointsLeft = FORGE_POINT_BUDGET - spentTotal;
 
   const postForge = useCallback(
     async (body: Record<string, unknown>) => {
@@ -114,13 +138,53 @@ export default function NationForgeWizard({
       </p>
 
       <div className="mt-6 rounded-2xl border border-amber-200/80 bg-amber-50/90 px-5 py-4 dark:border-amber-900/40 dark:bg-amber-950/30">
-        <p className="text-xs text-amber-950 dark:text-amber-100">Points remaining</p>
-        <p className="mt-1 text-4xl font-bold tabular-nums text-amber-950 dark:text-amber-50">
-          {pointsLeft}
-        </p>
-        <p className="mt-1 text-xs text-amber-900/80 dark:text-amber-200/90">
-          Budget {FORGE_POINT_BUDGET} · Spent so far {spent}
-        </p>
+        {stepId === "confirm" ? (
+          <>
+            <p className="text-xs text-amber-950 dark:text-amber-100">
+              Points remaining after full build
+            </p>
+            <p className="mt-1 text-4xl font-bold tabular-nums text-amber-950 dark:text-amber-50">
+              {pointsLeft}
+            </p>
+            <p className="mt-1 text-xs text-amber-900/80 dark:text-amber-200/90">
+              Budget {FORGE_POINT_BUDGET} · Total spend {spentTotal}
+            </p>
+          </>
+        ) : stepId === "demographicsAddons" ? (
+          <>
+            <p className="text-xs text-amber-950 dark:text-amber-100">
+              Room for optional add-ons
+            </p>
+            <p className="mt-1 text-4xl font-bold tabular-nums text-amber-950 dark:text-amber-50">
+              {budgetForCurrentStep(selections, "demographicsAddons")}
+            </p>
+            <p className="mt-1 text-xs text-amber-900/80 dark:text-amber-200/90">
+              Budget {FORGE_POINT_BUDGET} · Locked before add-ons ·{" "}
+              {computeSpendExcludingStep(selections, "demographicsAddons")} pts
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-amber-950 dark:text-amber-100">
+              Points for this pillar (changing pick refunds its cost)
+            </p>
+            <p className="mt-1 text-4xl font-bold tabular-nums text-amber-950 dark:text-amber-50">
+              {budgetHere}
+            </p>
+            <p className="mt-1 text-xs text-amber-900/80 dark:text-amber-200/90">
+              Budget {FORGE_POINT_BUDGET} · Locked in earlier pillars ·{" "}
+              {spentEarlier} pts
+            </p>
+            {currentPickId ? (
+              <p className="mt-2 text-xs font-medium text-amber-950 dark:text-amber-100">
+                Current pick: {choiceById(stepId, currentPickId)?.label ?? currentPickId}{" "}
+                <span className="font-mono font-normal text-amber-900/90">
+                  · {choiceById(stepId, currentPickId)?.cost ?? 0} pts
+                </span>
+              </p>
+            ) : null}
+          </>
+        )}
       </div>
 
       <div className="mt-8">
@@ -130,6 +194,12 @@ export default function NationForgeWizard({
         <h3 className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
           {STEP_HEADLINE[stepId]}
         </h3>
+        {currentPickId && stepId !== "confirm" && stepId !== "demographicsAddons" ? (
+          <p className="mt-2 text-sm text-emerald-800 dark:text-emerald-200">
+            Highlighted option below is your saved choice — pick another to replace
+            it, or use Back to undo later pillars.
+          </p>
+        ) : null}
       </div>
 
       {err ? (
@@ -174,8 +244,9 @@ export default function NationForgeWizard({
 
       {stepId !== "confirm" && stepId !== "demographicsAddons" ? (
         <ul className="mt-6 space-y-2">
-          {choicesOrderedForBudget(stepId, pointsLeft).map((c) => {
-            const affordable = c.cost <= pointsLeft;
+          {choicesOrderedForBudget(stepId, budgetHere).map((c) => {
+            const affordable = c.cost <= budgetHere;
+            const isCurrent = c.id === currentPickId;
             return (
               <li key={c.id}>
                 <button
@@ -184,21 +255,32 @@ export default function NationForgeWizard({
                   title={
                     affordable
                       ? undefined
-                      : `Need ${c.cost - pointsLeft} more points (go Back or pick a cheaper / 0 pt option).`
+                      : `Need ${c.cost - budgetHere} more points on this pillar (go Back or pick a cheaper / 0 pt option).`
                   }
-                  className="flex w-full flex-col items-start rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left text-sm transition hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-950 dark:hover:border-zinc-500"
+                  className={`flex w-full flex-col items-start rounded-xl border px-4 py-3 text-left text-sm transition hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:border-zinc-500 ${
+                    isCurrent
+                      ? "border-emerald-500 bg-emerald-50/90 ring-2 ring-emerald-400/60 dark:border-emerald-600 dark:bg-emerald-950/40 dark:ring-emerald-700/50"
+                      : "border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-950"
+                  }`}
                   onClick={() => void postForge({ type: "pick", choiceId: c.id })}
                 >
-                  <span className="font-medium text-zinc-900 dark:text-zinc-50">
-                    {c.label}{" "}
-                    <span className="font-mono text-zinc-500">· {c.cost} pts</span>
+                  <span className="flex flex-wrap items-center gap-2">
+                    {isCurrent ? (
+                      <span className="rounded-full bg-emerald-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white dark:bg-emerald-500 dark:text-emerald-950">
+                        Saved
+                      </span>
+                    ) : null}
+                    <span className="font-medium text-zinc-900 dark:text-zinc-50">
+                      {c.label}{" "}
+                      <span className="font-mono text-zinc-500">· {c.cost} pts</span>
+                    </span>
                   </span>
                   {c.blurb ? (
                     <span className="mt-1 text-xs text-zinc-500">{c.blurb}</span>
                   ) : null}
                   {!affordable ? (
                     <span className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
-                      Not affordable with current budget
+                      Not affordable for this pillar
                     </span>
                   ) : null}
                 </button>
@@ -213,6 +295,7 @@ export default function NationForgeWizard({
           key={`addons-${progress.stepIndex}-${(progress.selections.demographicsAddons ?? []).join(",")}`}
           initialIds={progress.selections.demographicsAddons ?? []}
           selections={progress.selections}
+          maxAddonSpend={budgetForCurrentStep(selections, "demographicsAddons")}
           busy={busy}
           postForge={postForge}
         />
@@ -254,11 +337,13 @@ export default function NationForgeWizard({
 function DemographicsAddonsPanel({
   initialIds,
   selections,
+  maxAddonSpend,
   busy,
   postForge,
 }: {
   initialIds: string[];
   selections: NationForgeSelections;
+  maxAddonSpend: number;
   busy: boolean;
   postForge: (body: Record<string, unknown>) => Promise<void>;
 }) {
@@ -269,9 +354,19 @@ function DemographicsAddonsPanel({
 
   return (
     <div className="mt-6 space-y-4">
+      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+        You can spend up to{" "}
+        <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+          {maxAddonSpend} pts
+        </span>{" "}
+        on add-ons (empty is fine). Remaining with this draft:{" "}
+        <span className="font-mono">
+          {FORGE_POINT_BUDGET - spendWithDraft(draft)}
+        </span>
+      </p>
       <p className="text-xs text-zinc-500">
-        Toggle any combination that fits your remaining budget. Unknown future
-        steps stay hidden — if you overspend early, you may need to go back.
+        Toggle any combination that fits. If you went Back, later pillars were
+        cleared so your budget matches this screen.
       </p>
       {choicesOrderedForBudget(
         "demographicsAddons",
