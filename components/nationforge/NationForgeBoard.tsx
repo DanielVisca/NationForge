@@ -1,5 +1,6 @@
 "use client";
 
+import type { UIMessage } from "ai";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import {
@@ -16,6 +17,22 @@ import type { Nation } from "@/lib/nationforge/schema";
 
 const HOST_TOKENS_KEY = "nationforge-host-tokens";
 const POLL_MS = 2500;
+
+function textFromAssistantMessage(m: UIMessage): string {
+  if (m.role !== "assistant") return "";
+  return m.parts
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
+
+function lastAssistantStory(messages: UIMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const t = textFromAssistantMessage(messages[i]!);
+    if (t.trim()) return t;
+  }
+  return "";
+}
 
 export default function NationForgeBoard() {
   const params = useParams();
@@ -77,6 +94,11 @@ export default function NationForgeBoard() {
 
   const crisis = session?.crisis ?? null;
 
+  const lastGmChapter = useMemo(() => {
+    if (!session?.gmMessages?.length) return "";
+    return lastAssistantStory(session.gmMessages);
+  }, [session]);
+
   const origin = useMemo(() => {
     if (typeof window === "undefined") return "";
     return window.location.origin;
@@ -115,6 +137,7 @@ export default function NationForgeBoard() {
       await consumeGmTextStream(res, (d) => {
         setGmStreamText((x) => x + d);
       });
+      setNarrative("");
       setCustomCrisisResponse("");
       setCrisisChoiceId("");
       setPublicDiplomacy("");
@@ -143,184 +166,298 @@ export default function NationForgeBoard() {
   }
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="mx-auto flex max-w-3xl flex-col gap-8 px-4 py-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link href="/nationforge" className="text-xs text-blue-600 underline">
             All sessions
           </Link>
-          <h1 className="text-xl font-semibold">
-            Room {session.roomCode}{" "}
-            <span className="text-sm font-normal text-zinc-500">
-              ({session.phase})
-            </span>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+            NationForge
           </h1>
+          <p className="text-xs text-zinc-500">
+            Room {session.roomCode} · round {session.roundIndex} ·{" "}
+            {session.phase.replace(/_/g, " ")}
+          </p>
         </div>
         {hostTokens ? (
-          <div className="max-w-lg rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
-            <div className="font-semibold">Host: share LAN join</div>
-            <div className="mt-1 font-mono break-all">
+          <details className="max-w-md rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+            <summary className="cursor-pointer font-semibold">
+              LAN host · join link & tokens
+            </summary>
+            <div className="mt-2 font-mono break-all">
               {origin}/nationforge/join?code={session.roomCode}
             </div>
             <ul className="mt-2 space-y-1">
               {session.nations.map((n) => (
                 <li key={n.id} className="font-mono text-[11px] break-all">
-                  {n.name} token: {hostTokens[n.id] ?? "—"}
+                  {n.name}: {hostTokens[n.id] ?? "—"}
                 </li>
               ))}
             </ul>
-          </div>
+          </details>
         ) : null}
       </div>
 
-      <section className="grid gap-4 md:grid-cols-2">
-        {session.nations.map((n) => (
-          <NationCard key={n.id} nation={n} />
-        ))}
-      </section>
-
       {crisis ? (
-        <section className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
-          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
-            Inflection
-          </h2>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">
+        <section className="rounded-2xl border border-violet-200/80 bg-gradient-to-b from-violet-50/90 to-white px-5 py-5 shadow-sm dark:border-violet-900/40 dark:from-violet-950/40 dark:to-zinc-950">
+          <p className="text-xs font-medium uppercase tracking-wide text-violet-700 dark:text-violet-300">
+            Right now
+          </p>
+          <p className="mt-2 whitespace-pre-wrap text-base leading-relaxed text-zinc-900 dark:text-zinc-100">
             {crisis.prompt}
           </p>
-          <div className="mt-3 space-y-2">
-            {crisis.options.map((o) => (
-              <label
-                key={o.id}
-                className="flex cursor-pointer items-start gap-2 text-sm"
-              >
-                <input
-                  type="radio"
-                  name="crisis"
-                  className="mt-1"
-                  checked={crisisChoiceId === o.id}
-                  onChange={() => setCrisisChoiceId(o.id)}
-                />
-                <span>
-                  <span className="font-mono text-xs text-zinc-500">{o.id}</span>{" "}
-                  {o.label}
-                </span>
-              </label>
-            ))}
-          </div>
         </section>
       ) : null}
 
-      <section className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
-        <h2 className="text-sm font-semibold">Your turn</h2>
-        <label className="mt-3 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          POV nation
+      {(lastGmChapter || gmStreamText) ? (
+        <section className="rounded-2xl border border-zinc-200 bg-white px-5 py-5 dark:border-zinc-700 dark:bg-zinc-900">
+          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Last GM reply
+          </p>
+          {gmStreamText ? (
+            <p className="mt-3 whitespace-pre-wrap text-base leading-relaxed text-zinc-900 dark:text-zinc-100">
+              {gmStreamText}
+            </p>
+          ) : (
+            <>
+              <p className="mt-3 line-clamp-6 whitespace-pre-wrap text-base leading-relaxed text-zinc-800 dark:text-zinc-200">
+                {lastGmChapter}
+              </p>
+              {lastGmChapter.length > 400 ? (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-sm text-blue-600 underline dark:text-blue-400">
+                    Read full chapter
+                  </summary>
+                  <p className="mt-3 whitespace-pre-wrap text-base leading-relaxed text-zinc-800 dark:text-zinc-200">
+                    {lastGmChapter}
+                  </p>
+                </details>
+              ) : null}
+            </>
+          )}
+        </section>
+      ) : (
+        <p className="text-center text-sm text-zinc-500">
+          Write your opening beat below. After each turn, more of the story
+          appears here.
+        </p>
+      )}
+
+      <section className="rounded-2xl border border-zinc-200 bg-zinc-50/50 px-5 py-5 dark:border-zinc-700 dark:bg-zinc-900/40">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[12rem] flex-1">
+            <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Whose eyes are we in?
+            </label>
+            <select
+              className="mt-1 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm dark:border-zinc-600 dark:bg-zinc-950"
+              value={povNationId}
+              onChange={(e) => setPovNationId(e.target.value)}
+            >
+              {session.nations.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <label className="mt-5 block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+          Storyline — write freely
         </label>
-        <select
-          className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-          value={povNationId}
-          onChange={(e) => setPovNationId(e.target.value)}
-        >
-          {session.nations.map((n) => (
-            <option key={n.id} value={n.id}>
-              {n.name}
-            </option>
-          ))}
-        </select>
-        <label className="mt-3 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          Narrative (required)
-        </label>
+        <p className="mt-1 text-xs text-zinc-500">
+          One open field: what happens, what people feel, what you try, how the
+          world shifts. You can tuck labeled choices and diplomacy under
+          &quot;More for this beat&quot; if you want the GM to lock onto a
+          specific option.
+        </p>
         <textarea
-          className="mt-1 min-h-[100px] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+          className="mt-3 min-h-[min(50vh,22rem)] w-full resize-y rounded-xl border border-zinc-300 bg-white px-4 py-3 text-base leading-relaxed text-zinc-900 shadow-inner outline-none ring-zinc-400 focus:border-zinc-500 focus:ring-2 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-50 dark:focus:border-zinc-500"
           value={narrative}
           onChange={(e) => setNarrative(e.target.value)}
-          placeholder="What happens this turn? Builds, tone, orders…"
+          placeholder="The Steel Veil hums. The envoys wait in the rain. You speak, you move, you bluff—or you stay silent and let the city decide…"
+          spellCheck
         />
-        <label className="mt-3 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          Custom crisis response (instead of a radio option)
-        </label>
-        <textarea
-          className="mt-1 min-h-[60px] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-          value={customCrisisResponse}
-          onChange={(e) => setCustomCrisisResponse(e.target.value)}
-          placeholder="Something else…"
-        />
-        <label className="mt-3 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          Public diplomacy (optional)
-        </label>
-        <textarea
-          className="mt-1 min-h-[50px] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-          value={publicDiplomacy}
-          onChange={(e) => setPublicDiplomacy(e.target.value)}
-        />
-        <label className="mt-3 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          Secret action (optional; GM registers as secret)
-        </label>
-        <textarea
-          className="mt-1 min-h-[50px] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-          value={secretAction}
-          onChange={(e) => setSecretAction(e.target.value)}
-        />
-        <label className="mt-3 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          Re-allocation notes (optional; GM applies via tools)
-        </label>
-        <textarea
-          className="mt-1 min-h-[40px] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-          value={reallocNotes}
-          onChange={(e) => setReallocNotes(e.target.value)}
-        />
+
+        <details className="mt-5 group rounded-xl border border-zinc-200 bg-white open:shadow-sm dark:border-zinc-700 dark:bg-zinc-950">
+          <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-zinc-700 marker:text-zinc-400 dark:text-zinc-300">
+            Inflection — pick a labeled option (optional)
+          </summary>
+          <div className="border-t border-zinc-100 px-4 pb-4 pt-3 dark:border-zinc-800">
+            {crisis ? (
+              <div className="space-y-2">
+                {crisis.options.map((o) => (
+                  <label
+                    key={o.id}
+                    className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-900"
+                  >
+                    <input
+                      type="radio"
+                      name="crisis"
+                      className="mt-1"
+                      checked={crisisChoiceId === o.id}
+                      onChange={() => setCrisisChoiceId(o.id)}
+                    />
+                    <span>
+                      <span className="font-mono text-xs text-zinc-400">
+                        {o.id}
+                      </span>{" "}
+                      {o.label}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-500">No active inflection list.</p>
+            )}
+          </div>
+        </details>
+
+        <details className="mt-3 rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-950">
+          <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-zinc-700 marker:text-zinc-400 dark:text-zinc-300">
+            More for this beat — diplomacy, something else, secrets, stats
+          </summary>
+          <div className="space-y-4 border-t border-zinc-100 px-4 pb-4 pt-4 dark:border-zinc-800">
+            <div>
+              <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                Something else (instead of a radio option)
+              </label>
+              <textarea
+                className="mt-1 min-h-[4rem] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                value={customCrisisResponse}
+                onChange={(e) => setCustomCrisisResponse(e.target.value)}
+                placeholder="A plan the listed options do not cover…"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                Public diplomacy
+              </label>
+              <textarea
+                className="mt-1 min-h-[3.5rem] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                value={publicDiplomacy}
+                onChange={(e) => setPublicDiplomacy(e.target.value)}
+                placeholder="What other nations hear…"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                Secret action
+              </label>
+              <textarea
+                className="mt-1 min-h-[3.5rem] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                value={secretAction}
+                onChange={(e) => setSecretAction(e.target.value)}
+                placeholder="What stays off the wire…"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                Stat / reserve asks for the GM
+              </label>
+              <textarea
+                className="mt-1 min-h-[3rem] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                value={reallocNotes}
+                onChange={(e) => setReallocNotes(e.target.value)}
+                placeholder="e.g. move 3 reserve into counter-intel…"
+              />
+            </div>
+          </div>
+        </details>
+
         {error ? (
-          <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>
+          <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>
         ) : null}
         <button
           type="button"
           disabled={busy}
-          className="mt-4 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+          className="mt-5 w-full rounded-xl bg-zinc-900 py-3 text-sm font-semibold text-white shadow disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
           onClick={() => void submitTurn()}
         >
-          {busy ? "GM resolving…" : "Submit turn to GM"}
+          {busy ? "GM is writing the next beat…" : "Send to GM"}
         </button>
       </section>
 
-      {gmStreamText ? (
-        <section className="rounded-xl border border-blue-200 bg-blue-50/80 p-4 text-sm text-zinc-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-zinc-100">
-          <h3 className="text-xs font-semibold uppercase text-blue-800 dark:text-blue-200">
-            Latest GM stream
-          </h3>
-          <p className="mt-2 whitespace-pre-wrap">{gmStreamText}</p>
-        </section>
-      ) : null}
-
-      <section className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
-        <h2 className="text-sm font-semibold">Public log</h2>
-        <ul className="mt-2 space-y-2 text-sm text-zinc-700 dark:text-zinc-300">
-          {session.turnLog.map((e) => (
-            <li key={e.id}>
-              <span className="text-xs text-zinc-500">
-                {new Date(e.at).toLocaleString()}
-              </span>{" "}
-              {e.publicSummary}
-            </li>
+      <details className="rounded-xl border border-zinc-200 dark:border-zinc-700">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+          World & stats
+        </summary>
+        <div className="grid gap-4 border-t border-zinc-100 p-4 md:grid-cols-2 dark:border-zinc-800">
+          {session.nations.map((n) => (
+            <NationCard key={n.id} nation={n} />
           ))}
-        </ul>
-      </section>
+        </div>
+      </details>
 
-      <section className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
-        <h2 className="text-sm font-semibold">Secrets registry</h2>
-        <ul className="mt-2 space-y-2 text-xs">
-          {session.secrets.map((s) => (
-            <li key={s.id} className="font-mono text-zinc-600 dark:text-zinc-400">
-              {s.nationId.slice(0, 8)}… {s.label}{" "}
-              {s.content ? (
-                <span className="block whitespace-pre-wrap text-zinc-900 dark:text-zinc-100">
-                  {s.content}
-                </span>
+      <details className="rounded-xl border border-zinc-200 dark:border-zinc-700">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+          Chronicle — public log
+          {session.turnLog.length > 0 ? (
+            <span className="ml-2 font-normal text-zinc-400">
+              ({session.turnLog.length} beats)
+            </span>
+          ) : null}
+        </summary>
+        <ul className="space-y-3 border-t border-zinc-100 p-4 text-sm text-zinc-700 dark:border-zinc-800 dark:text-zinc-300">
+          {[...session.turnLog].reverse().map((e, idx) => (
+            <li key={e.id}>
+              {idx > 0 ? (
+                <details>
+                  <summary className="cursor-pointer text-xs text-zinc-500">
+                    {new Date(e.at).toLocaleString()} —{" "}
+                    <span className="line-clamp-2 text-zinc-700 dark:text-zinc-300">
+                      {e.publicSummary}
+                    </span>
+                  </summary>
+                  <p className="mt-2 whitespace-pre-wrap pl-2 text-zinc-800 dark:text-zinc-200">
+                    {e.publicSummary}
+                  </p>
+                </details>
               ) : (
-                <span className="text-zinc-400">(hidden)</span>
+                <>
+                  <span className="text-xs text-zinc-500">
+                    {new Date(e.at).toLocaleString()} · latest
+                  </span>
+                  <p className="mt-1 whitespace-pre-wrap text-zinc-900 dark:text-zinc-100">
+                    {e.publicSummary}
+                  </p>
+                </>
               )}
             </li>
           ))}
         </ul>
-      </section>
+      </details>
+
+      <details className="rounded-xl border border-zinc-200 dark:border-zinc-700">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+          Secrets you may know
+        </summary>
+        <ul className="space-y-3 border-t border-zinc-100 p-4 text-xs dark:border-zinc-800">
+          {session.secrets.length === 0 ? (
+            <li className="text-zinc-500">None yet.</li>
+          ) : (
+            session.secrets.map((s) => (
+              <li
+                key={s.id}
+                className="rounded-lg border border-zinc-100 p-2 dark:border-zinc-800"
+              >
+                <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                  {s.label}
+                </span>
+                {s.content ? (
+                  <p className="mt-1 whitespace-pre-wrap text-zinc-900 dark:text-zinc-100">
+                    {s.content}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-zinc-400">Still hidden from this seat.</p>
+                )}
+              </li>
+            ))
+          )}
+        </ul>
+      </details>
     </div>
   );
 }
