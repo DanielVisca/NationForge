@@ -5,9 +5,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { UIMessage } from "ai";
 
-import type { Crisis, GameSession, Nation, NationStats } from "./schema";
+import type { GameSession, Nation, NationStats } from "./schema";
 import type { PublicGameSession, PublicSecret } from "./public-types";
 import { STAT_KEYS } from "./schema";
+import { migrateSession } from "./session-migrate";
 
 type StoreFile = {
   sessions: Record<string, GameSession>;
@@ -17,25 +18,10 @@ type StoreFile = {
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 const STORE_PATH = path.join(DATA_DIR, "nationforge-sessions.json");
+const MAX_NATIONS_PER_SESSION = 12;
 
 function defaultStats(): NationStats {
   return Object.fromEntries(STAT_KEYS.map((k) => [k, 50])) as NationStats;
-}
-
-function starterCrisis(nationA: string, nationB: string): Crisis {
-  return {
-    id: randomUUID(),
-    prompt:
-      "Year 1 — both powers scan the frontier. Choose how your nation opens the era.",
-    options: [
-      { id: "a", label: "Signal peaceful intent; invest in trade envoys" },
-      { id: "b", label: "Fortify borders; prioritize internal security" },
-      { id: "c", label: "Secretly accelerate a high-risk research program" },
-      { id: "d", label: "Demand joint inspection of shared infrastructure" },
-    ],
-    allowCustom: true,
-    activeNationIds: [nationA, nationB],
-  };
 }
 
 function randomRoomCode(): string {
@@ -60,33 +46,9 @@ async function writeStore(store: StoreFile): Promise<void> {
   await writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf-8");
 }
 
-function emptySeatTokens(nationIds: string[]): Record<string, string> {
-  return Object.fromEntries(
-    nationIds.map((id) => [id, randomUUID()] as const),
-  );
-}
-
 export async function createGameSession(): Promise<GameSession> {
   const store = await readStore();
   const id = randomUUID();
-  const na = randomUUID();
-  const nb = randomUUID();
-  const nations: Nation[] = [
-    {
-      id: na,
-      name: "Nation A",
-      buildNotes: "100-point build TBD — edit on first turn.",
-      stats: defaultStats(),
-      reserve: 0,
-    },
-    {
-      id: nb,
-      name: "Nation B",
-      buildNotes: "100-point build TBD — edit on first turn.",
-      stats: defaultStats(),
-      reserve: 0,
-    },
-  ];
   let roomCode = randomRoomCode();
   while (store.roomIndex[roomCode]) {
     roomCode = randomRoomCode();
@@ -98,14 +60,15 @@ export async function createGameSession(): Promise<GameSession> {
     createdAt: now,
     updatedAt: now,
     promptVersion: 1,
-    phase: "awaiting_decision",
+    phase: "lobby",
+    gameStarted: false,
     roundIndex: 0,
-    activeNationId: na,
-    nations,
-    crisis: starterCrisis(na, nb),
+    activeNationId: "",
+    nations: [],
+    crisis: null,
     turnLog: [],
     secrets: [],
-    seatTokens: emptySeatTokens([na, nb]),
+    seatTokens: {},
     gmMessages: [],
   };
   store.sessions[id] = session;
@@ -114,11 +77,77 @@ export async function createGameSession(): Promise<GameSession> {
   return session;
 }
 
+export async function registerNation(
+  roomCode: string,
+  displayName: string,
+): Promise<
+  | { ok: true; sessionId: string; nationId: string; token: string; name: string }
+  | { ok: false; error: string }
+> {
+  const store = await readStore();
+  const sessionId = store.roomIndex[roomCode.trim().toUpperCase()];
+  if (!sessionId) return { ok: false, error: "Room not found" };
+  const raw = store.sessions[sessionId];
+  if (!raw) return { ok: false, error: "Room not found" };
+  const session = migrateSession(raw);
+
+  if (session.nations.length >= MAX_NATIONS_PER_SESSION) {
+    return { ok: false, error: "Room is full (12 nations max)." };
+  }
+
+  const trimmed = displayName.trim().slice(0, 80);
+  if (!trimmed) {
+    return { ok: false, error: "Display name is required." };
+  }
+
+  const nationId = randomUUID();
+  const token = randomUUID();
+  const nation: Nation = {
+    id: nationId,
+    name: trimmed,
+    buildNotes: "Nation forge in progress — finish the builder to take turns.",
+    stats: defaultStats(),
+    reserve: 0,
+    forgeComplete: false,
+    forgeProgress: {
+      stepIndex: 0,
+      selections: { demographicsAddons: [] },
+    },
+  };
+
+  const next: GameSession = {
+    ...session,
+    nations: [...session.nations, nation],
+    seatTokens: { ...session.seatTokens, [nationId]: token },
+    phase:
+      session.phase === "lobby"
+        ? "nation_forge"
+        : session.phase === "player_input" ||
+            session.phase === "awaiting_decision" ||
+            session.phase === "gm_running"
+          ? session.phase
+          : "nation_forge",
+    activeNationId: session.activeNationId || nationId,
+  };
+
+  store.sessions[sessionId] = next;
+  await writeStore(store);
+  return {
+    ok: true,
+    sessionId,
+    nationId,
+    token,
+    name: trimmed,
+  };
+}
+
 export async function getGameSession(
   id: string,
 ): Promise<GameSession | undefined> {
   const store = await readStore();
-  return store.sessions[id];
+  const s = store.sessions[id];
+  if (!s) return undefined;
+  return migrateSession(s);
 }
 
 export async function getSessionIdByRoomCode(
@@ -162,9 +191,10 @@ export function filterSessionForClient(
   viewerNationId: string | null,
   seatToken: string | null,
 ): PublicGameSession {
+  const s = migrateSession(session);
   let nationFromToken: string | null = null;
   if (seatToken) {
-    for (const [nid, tok] of Object.entries(session.seatTokens)) {
+    for (const [nid, tok] of Object.entries(s.seatTokens)) {
       if (tok === seatToken) {
         nationFromToken = nid;
         break;
@@ -173,34 +203,34 @@ export function filterSessionForClient(
   }
   const effectiveViewer = viewerNationId ?? nationFromToken;
 
-  const secrets: PublicSecret[] = session.secrets.map((s) => {
-    if (s.revealed) {
+  const secrets: PublicSecret[] = s.secrets.map((sec) => {
+    if (sec.revealed) {
       return {
-        id: s.id,
-        nationId: s.nationId,
-        label: s.label,
+        id: sec.id,
+        nationId: sec.nationId,
+        label: sec.label,
         revealed: true,
-        content: s.content,
+        content: sec.content,
       };
     }
-    if (effectiveViewer && s.nationId === effectiveViewer) {
+    if (effectiveViewer && sec.nationId === effectiveViewer) {
       return {
-        id: s.id,
-        nationId: s.nationId,
-        label: s.label,
+        id: sec.id,
+        nationId: sec.nationId,
+        label: sec.label,
         revealed: false,
-        content: s.content,
+        content: sec.content,
       };
     }
     return {
-      id: s.id,
-      nationId: s.nationId,
-      label: s.label,
+      id: sec.id,
+      nationId: sec.nationId,
+      label: sec.label,
       revealed: false,
     };
   });
 
-  const { seatTokens, secrets: _sessionSecrets, ...rest } = session;
+  const { seatTokens, secrets: _sessionSecrets, ...rest } = s;
   void seatTokens;
   void _sessionSecrets;
   return {
@@ -212,17 +242,17 @@ export function filterSessionForClient(
 
 export async function listGameSessions(): Promise<GameSession[]> {
   const store = await readStore();
-  return Object.values(store.sessions).sort(
-    (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
-  );
+  return Object.values(store.sessions)
+    .map((s) => migrateSession(s))
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
 
 export async function appendGmMessage(
   sessionId: string,
   message: UIMessage,
 ): Promise<void> {
-  await updateGameSession(sessionId, (s) => {
-    s.gmMessages = [...s.gmMessages, message];
+  await updateGameSession(sessionId, (sess) => {
+    sess.gmMessages = [...sess.gmMessages, message];
   });
 }
 
@@ -230,7 +260,7 @@ export async function replaceGmMessages(
   sessionId: string,
   messages: UIMessage[],
 ): Promise<void> {
-  await updateGameSession(sessionId, (s) => {
-    s.gmMessages = messages;
+  await updateGameSession(sessionId, (sess) => {
+    sess.gmMessages = messages;
   });
 }

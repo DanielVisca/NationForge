@@ -18,8 +18,27 @@ export function validatePlayerTurn(
     return { ok: false, error: "Narrative is required (describe your move)." };
   }
 
+  if (!session.gameStarted) {
+    return {
+      ok: false,
+      error:
+        session.nations.length === 0
+          ? "No one has claimed a seat in this room yet."
+          : "Every nation still in the builder must finish the 100-point forge before the GM opens the chronicle.",
+    };
+  }
+
   if (!session.nations.some((n) => n.id === p.povNationId)) {
     return { ok: false, error: "Unknown povNationId" };
+  }
+
+  const povNation = session.nations.find((n) => n.id === p.povNationId);
+  if (povNation && !povNation.forgeComplete) {
+    return {
+      ok: false,
+      error:
+        "Finish your nation builder (one section at a time) before taking turns.",
+    };
   }
 
   if (session.phase === "gm_running") {

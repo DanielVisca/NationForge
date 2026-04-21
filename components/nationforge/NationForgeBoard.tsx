@@ -2,7 +2,7 @@
 
 import type { UIMessage } from "ai";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   startTransition,
   useCallback,
@@ -14,6 +14,8 @@ import {
 import { consumeGmTextStream } from "@/lib/nationforge/consume-gm-stream";
 import type { PublicGameSession } from "@/lib/nationforge/public-types";
 import type { Nation } from "@/lib/nationforge/schema";
+
+import NationForgeWizard from "./NationForgeWizard";
 
 const HOST_TOKENS_KEY = "nationforge-host-tokens";
 const POLL_MS = 2500;
@@ -34,8 +36,24 @@ function lastAssistantStory(messages: UIMessage[]): string {
   return "";
 }
 
+function mergeSeatToken(sessionId: string, nationId: string, token: string) {
+  if (typeof globalThis.window === "undefined") return;
+  try {
+    const raw = globalThis.localStorage.getItem(HOST_TOKENS_KEY);
+    const all = (raw ? JSON.parse(raw) : {}) as Record<
+      string,
+      Record<string, string>
+    >;
+    all[sessionId] = { ...(all[sessionId] ?? {}), [nationId]: token };
+    globalThis.localStorage.setItem(HOST_TOKENS_KEY, JSON.stringify(all));
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function NationForgeBoard() {
   const params = useParams();
+  const router = useRouter();
   const sessionId = params.sessionId as string;
   const searchParams = useSearchParams();
   const urlToken = searchParams.get("token");
@@ -64,6 +82,10 @@ export default function NationForgeBoard() {
   const [secretAction, setSecretAction] = useState("");
   const [reallocNotes, setReallocNotes] = useState("");
 
+  const [joinName, setJoinName] = useState("");
+  const [joinBusy, setJoinBusy] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     const token = urlToken ?? "";
     const res = await fetch(
@@ -72,10 +94,13 @@ export default function NationForgeBoard() {
     if (!res.ok) return;
     const data = (await res.json()) as PublicGameSession;
     setSession(data);
-    if (!povNationId && data.nations[0]) {
-      setPovNationId(data.activeNationId ?? data.nations[0].id);
-    }
-  }, [sessionId, urlToken, povNationId]);
+    setPovNationId((prev) => {
+      if (data.viewerNationId) return data.viewerNationId;
+      if (prev) return prev;
+      if (data.nations[0]) return data.activeNationId ?? data.nations[0]!.id;
+      return prev;
+    });
+  }, [sessionId, urlToken]);
 
   useEffect(() => {
     startTransition(() => {
@@ -103,6 +128,78 @@ export default function NationForgeBoard() {
     if (typeof window === "undefined") return "";
     return window.location.origin;
   }, []);
+
+  const myNation = useMemo(() => {
+    if (!session?.viewerNationId) return undefined;
+    return session.nations.find((n) => n.id === session.viewerNationId);
+  }, [session]);
+
+  const showWizard = Boolean(
+    urlToken && myNation && !myNation.forgeComplete && myNation.forgeProgress,
+  );
+
+  const povNation = useMemo(
+    () => session?.nations.find((n) => n.id === povNationId),
+    [session, povNationId],
+  );
+
+  const waitingForTableOpen = Boolean(
+    session &&
+      urlToken &&
+      myNation?.forgeComplete &&
+      !session.gameStarted &&
+      session.nations.length > 0,
+  );
+
+  const canSendTurn = useMemo(() => {
+    if (!session?.gameStarted || !narrative.trim()) return false;
+    if (!povNation?.forgeComplete) return false;
+    if (session.phase === "gm_running") return false;
+    if (session.phase === "awaiting_decision" && session.crisis) {
+      if (!crisisChoiceId && !customCrisisResponse.trim()) return false;
+      if (crisisChoiceId && customCrisisResponse.trim()) return false;
+    }
+    return true;
+  }, [
+    session,
+    narrative,
+    povNation,
+    crisisChoiceId,
+    customCrisisResponse,
+  ]);
+
+  const claimSeat = useCallback(async () => {
+    if (!session) return;
+    setJoinBusy(true);
+    setJoinError(null);
+    try {
+      const res = await fetch("/api/nationforge/nations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomCode: session.roomCode,
+          displayName: joinName.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const j = (await res.json()) as { error?: string };
+        throw new Error(j.error ?? "Could not claim seat");
+      }
+      const data = (await res.json()) as {
+        sessionId: string;
+        nationId: string;
+        token: string;
+      };
+      mergeSeatToken(data.sessionId, data.nationId, data.token);
+      router.replace(
+        `/nationforge/${data.sessionId}?token=${encodeURIComponent(data.token)}`,
+      );
+    } catch (e) {
+      setJoinError(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setJoinBusy(false);
+    }
+  }, [session, joinName, router]);
 
   const submitTurn = useCallback(async () => {
     if (!sessionId) return;
@@ -165,6 +262,24 @@ export default function NationForgeBoard() {
     return <div className="p-8 text-center text-sm text-zinc-500">Loading…</div>;
   }
 
+  if (showWizard && myNation?.forgeProgress) {
+    return (
+      <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
+        <div className="border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+          <Link href="/nationforge" className="text-xs text-blue-600 underline">
+            All sessions
+          </Link>
+        </div>
+        <NationForgeWizard
+          sessionId={sessionId}
+          token={urlToken!}
+          nation={myNation}
+          onDone={load}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-8 px-4 py-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -178,26 +293,72 @@ export default function NationForgeBoard() {
           <p className="text-xs text-zinc-500">
             Room {session.roomCode} · round {session.roundIndex} ·{" "}
             {session.phase.replace(/_/g, " ")}
+            {session.gameStarted ? "" : " · lobby / nation forge"}
           </p>
         </div>
-        {hostTokens ? (
-          <details className="max-w-md rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
-            <summary className="cursor-pointer font-semibold">
-              LAN host · join link & tokens
-            </summary>
-            <div className="mt-2 font-mono break-all">
-              {origin}/nationforge/join?code={session.roomCode}
-            </div>
-            <ul className="mt-2 space-y-1">
+        <details className="max-w-md rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+          <summary className="cursor-pointer font-semibold">Share & join</summary>
+          <p className="mt-2 text-zinc-600 dark:text-zinc-400">
+            Others join with the room code and their nation name (or use this
+            link):
+          </p>
+          <div className="mt-2 font-mono break-all text-[11px]">
+            {origin}/nationforge/join?code={session.roomCode}
+          </div>
+          {hostTokens ? (
+            <ul className="mt-3 space-y-1 border-t border-zinc-200 pt-2 dark:border-zinc-700">
+              <li className="font-medium text-amber-900 dark:text-amber-200">
+                Seat tokens (host copy)
+              </li>
               {session.nations.map((n) => (
-                <li key={n.id} className="font-mono text-[11px] break-all">
+                <li key={n.id} className="font-mono text-[10px] break-all">
                   {n.name}: {hostTokens[n.id] ?? "—"}
                 </li>
               ))}
             </ul>
-          </details>
-        ) : null}
+          ) : null}
+        </details>
       </div>
+
+      {!urlToken ? (
+        <section className="rounded-2xl border border-blue-200 bg-blue-50/80 px-5 py-5 dark:border-blue-900/50 dark:bg-blue-950/30">
+          <h2 className="text-sm font-semibold text-blue-950 dark:text-blue-100">
+            Claim your seat
+          </h2>
+          <p className="mt-2 text-sm text-blue-900/90 dark:text-blue-200/90">
+            You are spectating without a seat token. Enter the name of your
+            nation to join this room — you will run the 100-point builder before
+            play opens. You can join after others have started; your builder runs
+            privately until you finish.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <input
+              className="min-w-[12rem] flex-1 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm dark:border-blue-900 dark:bg-zinc-950"
+              value={joinName}
+              onChange={(e) => setJoinName(e.target.value)}
+              placeholder="Nation display name"
+            />
+            <button
+              type="button"
+              disabled={joinBusy || !joinName.trim()}
+              className="rounded-lg bg-blue-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-blue-200 dark:text-blue-950"
+              onClick={() => void claimSeat()}
+            >
+              {joinBusy ? "…" : "Claim seat"}
+            </button>
+          </div>
+          {joinError ? (
+            <p className="mt-2 text-sm text-red-600 dark:text-red-400">{joinError}</p>
+          ) : null}
+        </section>
+      ) : null}
+
+      {waitingForTableOpen ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
+          Your nation is forged. Waiting for everyone else to finish their
+          builder before the GM opens the chronicle.
+        </div>
+      ) : null}
 
       {crisis ? (
         <section className="rounded-2xl border border-violet-200/80 bg-gradient-to-b from-violet-50/90 to-white px-5 py-5 shadow-sm dark:border-violet-900/40 dark:from-violet-950/40 dark:to-zinc-950">
@@ -210,7 +371,7 @@ export default function NationForgeBoard() {
         </section>
       ) : null}
 
-      {(lastGmChapter || gmStreamText) ? (
+      {lastGmChapter || gmStreamText ? (
         <section className="rounded-2xl border border-zinc-200 bg-white px-5 py-5 dark:border-zinc-700 dark:bg-zinc-900">
           <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
             Last GM reply
@@ -239,8 +400,9 @@ export default function NationForgeBoard() {
         </section>
       ) : (
         <p className="text-center text-sm text-zinc-500">
-          Write your opening beat below. After each turn, more of the story
-          appears here.
+          {session.gameStarted
+            ? "Write your opening beat below. After each turn, more of the story appears here."
+            : "Once every claimed nation finishes the 100-point forge, the first crisis and storyline open here."}
         </p>
       )}
 
@@ -254,10 +416,12 @@ export default function NationForgeBoard() {
               className="mt-1 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm dark:border-zinc-600 dark:bg-zinc-950"
               value={povNationId}
               onChange={(e) => setPovNationId(e.target.value)}
+              disabled={!session.nations.length}
             >
               {session.nations.map((n) => (
                 <option key={n.id} value={n.id}>
                   {n.name}
+                  {!n.forgeComplete ? " (still forging)" : ""}
                 </option>
               ))}
             </select>
@@ -274,11 +438,12 @@ export default function NationForgeBoard() {
           specific option.
         </p>
         <textarea
-          className="mt-3 min-h-[min(50vh,22rem)] w-full resize-y rounded-xl border border-zinc-300 bg-white px-4 py-3 text-base leading-relaxed text-zinc-900 shadow-inner outline-none ring-zinc-400 focus:border-zinc-500 focus:ring-2 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-50 dark:focus:border-zinc-500"
+          className="mt-3 min-h-[min(50vh,22rem)] w-full resize-y rounded-xl border border-zinc-300 bg-white px-4 py-3 text-base leading-relaxed text-zinc-900 shadow-inner outline-none ring-zinc-400 focus:border-zinc-500 focus:ring-2 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-50 dark:focus:border-zinc-500"
           value={narrative}
           onChange={(e) => setNarrative(e.target.value)}
           placeholder="The Steel Veil hums. The envoys wait in the rain. You speak, you move, you bluff—or you stay silent and let the city decide…"
           spellCheck
+          disabled={!session.gameStarted || !povNation?.forgeComplete}
         />
 
         <details className="mt-5 group rounded-xl border border-zinc-200 bg-white open:shadow-sm dark:border-zinc-700 dark:bg-zinc-950">
@@ -299,6 +464,7 @@ export default function NationForgeBoard() {
                       className="mt-1"
                       checked={crisisChoiceId === o.id}
                       onChange={() => setCrisisChoiceId(o.id)}
+                      disabled={!session.gameStarted}
                     />
                     <span>
                       <span className="font-mono text-xs text-zinc-400">
@@ -329,6 +495,7 @@ export default function NationForgeBoard() {
                 value={customCrisisResponse}
                 onChange={(e) => setCustomCrisisResponse(e.target.value)}
                 placeholder="A plan the listed options do not cover…"
+                disabled={!session.gameStarted}
               />
             </div>
             <div>
@@ -340,6 +507,7 @@ export default function NationForgeBoard() {
                 value={publicDiplomacy}
                 onChange={(e) => setPublicDiplomacy(e.target.value)}
                 placeholder="What other nations hear…"
+                disabled={!session.gameStarted}
               />
             </div>
             <div>
@@ -351,6 +519,7 @@ export default function NationForgeBoard() {
                 value={secretAction}
                 onChange={(e) => setSecretAction(e.target.value)}
                 placeholder="What stays off the wire…"
+                disabled={!session.gameStarted}
               />
             </div>
             <div>
@@ -362,6 +531,7 @@ export default function NationForgeBoard() {
                 value={reallocNotes}
                 onChange={(e) => setReallocNotes(e.target.value)}
                 placeholder="e.g. move 3 reserve into counter-intel…"
+                disabled={!session.gameStarted}
               />
             </div>
           </div>
@@ -372,7 +542,7 @@ export default function NationForgeBoard() {
         ) : null}
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || !canSendTurn}
           className="mt-5 w-full rounded-xl bg-zinc-900 py-3 text-sm font-semibold text-white shadow disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
           onClick={() => void submitTurn()}
         >
@@ -466,7 +636,14 @@ function NationCard({ nation }: { nation: Nation }) {
   const entries = Object.entries(nation.stats) as [string, number][];
   return (
     <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
-      <h3 className="font-semibold">{nation.name}</h3>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-semibold">{nation.name}</h3>
+        {!nation.forgeComplete ? (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            Forging
+          </span>
+        ) : null}
+      </div>
       <p className="mt-1 text-xs text-zinc-500">Reserve: {nation.reserve}</p>
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         {entries.map(([k, v]) => (

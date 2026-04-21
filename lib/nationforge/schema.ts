@@ -1,6 +1,10 @@
 /** NationForge domain — authoritative game state (not chat prose). */
 
+import type { NationForgeSelections } from "./nation-forge-catalog";
+
 export type GamePhase =
+  | "lobby"
+  | "nation_forge"
   | "player_input"
   | "gm_running"
   | "awaiting_decision";
@@ -24,6 +28,11 @@ export const STAT_KEYS: StatKey[] = [
 
 export type NationStats = Record<StatKey, number>;
 
+export type NationForgeProgress = {
+  stepIndex: number;
+  selections: NationForgeSelections;
+};
+
 export type Nation = {
   id: string;
   name: string;
@@ -31,6 +40,10 @@ export type Nation = {
   buildNotes: string;
   stats: NationStats;
   reserve: number;
+  /** False while the player is stepping through the 100-point builder. */
+  forgeComplete: boolean;
+  /** Present when forgeComplete is false; cleared after finalize. */
+  forgeProgress: NationForgeProgress | null;
 };
 
 export type CrisisOption = {
@@ -70,6 +83,8 @@ export type GameSession = {
   updatedAt: string;
   promptVersion: number;
   phase: GamePhase;
+  /** First beat begins only after every nation present has completed the forge once. */
+  gameStarted: boolean;
   roundIndex: number;
   activeNationId: string;
   nations: Nation[];

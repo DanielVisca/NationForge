@@ -30,9 +30,11 @@ export default async function NationForgeIndexPage() {
         NationForge
       </h1>
       <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-        Hot-seat first: pass the laptop at each inflection. LAN: share room
-        code and per-nation seat tokens. Numeric stats change only via GM tool
-        calls on the server.
+        Create a room, then each player claims a seat with their nation name.
+        Everyone runs the same 100-point nation builder (one section at a time)
+        before the first GM beat; new players can join later and complete the
+        builder while the table continues. Stats change only via GM tool calls
+        on the server.
       </p>
       <div className="mt-6 flex flex-wrap gap-3">
         <Link
@@ -55,7 +57,11 @@ export default async function NationForgeIndexPage() {
               href={`/nationforge/${s.id}`}
               className="text-sm text-blue-600 underline dark:text-blue-400"
             >
-              Room {s.roomCode} — {s.nationNames.join(" vs ")} ({s.phase})
+              Room {s.roomCode}
+              {s.nationNames.length > 0
+                ? ` — ${s.nationNames.join(" vs ")}`
+                : " — empty room"}{" "}
+              ({s.phase})
             </Link>
           </li>
         ))}
