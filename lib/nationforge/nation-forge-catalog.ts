@@ -338,3 +338,34 @@ export function isForgeSelectionsComplete(s: NationForgeSelections): boolean {
     Boolean(s.cultural && s.environment)
   );
 }
+
+/** Wizard progress shape (mirrors schema `NationForgeProgress` without importing schema — avoids cycles). */
+export type ForgeWizardProgressShape = {
+  stepIndex: number;
+  selections: NationForgeSelections;
+  forgeWizardVersion?: number;
+  suggestedNationName?: string;
+};
+
+const LEGACY_CONFIRM_STEP_INDEX = 11;
+
+/** Old saves used confirm at index 11; bump to new confirm after inserting naming. */
+export function migrateForgeWizardProgress(
+  fp: ForgeWizardProgressShape,
+): ForgeWizardProgressShape {
+  const newConfirmIndex = FORGE_STEP_IDS.indexOf("confirm");
+  if (fp.forgeWizardVersion === 2) return fp;
+  if (
+    fp.forgeWizardVersion === undefined &&
+    fp.stepIndex === LEGACY_CONFIRM_STEP_INDEX
+  ) {
+    if (isForgeSelectionsComplete(fp.selections)) {
+      return {
+        ...fp,
+        stepIndex: newConfirmIndex,
+        forgeWizardVersion: 2,
+      };
+    }
+  }
+  return { ...fp, forgeWizardVersion: 2 };
+}

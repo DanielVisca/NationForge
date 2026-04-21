@@ -1,31 +1,7 @@
 import type { UIMessage } from "ai";
 
-import {
-  FORGE_STEP_IDS,
-  isForgeSelectionsComplete,
-} from "./nation-forge-catalog";
+import { migrateForgeWizardProgress } from "./nation-forge-catalog";
 import type { GameSession, Nation, NationForgeProgress } from "./schema";
-
-const LEGACY_CONFIRM_STEP_INDEX = 11;
-const NEW_CONFIRM_STEP_INDEX = FORGE_STEP_IDS.indexOf("confirm");
-
-/** Old saves used confirm at index 11; bump to new confirm after inserting naming. */
-function migrateForgeWizardProgress(fp: NationForgeProgress): NationForgeProgress {
-  if (fp.forgeWizardVersion === 2) return fp;
-  if (
-    fp.forgeWizardVersion === undefined &&
-    fp.stepIndex === LEGACY_CONFIRM_STEP_INDEX
-  ) {
-    if (isForgeSelectionsComplete(fp.selections)) {
-      return {
-        ...fp,
-        stepIndex: NEW_CONFIRM_STEP_INDEX,
-        forgeWizardVersion: 2,
-      };
-    }
-  }
-  return { ...fp, forgeWizardVersion: 2 };
-}
 
 function hasAssistantReply(messages: UIMessage[]): boolean {
   return messages.some((m) => {
