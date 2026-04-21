@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   applyForgeActionToSession,
   applyLoadNameSuggestionToSession,
+  applyLoadReviewNarrativeToSession,
   type ForgeClientAction,
   getForgeNationByToken,
 } from "@/lib/nationforge/forge-handlers";
@@ -51,6 +52,24 @@ export async function POST(req: Request, context: Ctx) {
   if (type === "loadNameSuggestion") {
     const force = Boolean(rest.force);
     const applied = await applyLoadNameSuggestionToSession(
+      session,
+      found.index,
+      force,
+    );
+    if (!applied.ok) {
+      return NextResponse.json({ error: applied.error }, { status: 400 });
+    }
+    await saveGameSession(applied.session);
+    const fresh = await getGameSession(sessionId);
+    const publicView = fresh
+      ? filterSessionForClient(fresh, null, token)
+      : null;
+    return NextResponse.json({ ok: true, session: publicView });
+  }
+
+  if (type === "loadReviewNarrative") {
+    const force = Boolean(rest.force);
+    const applied = await applyLoadReviewNarrativeToSession(
       session,
       found.index,
       force,

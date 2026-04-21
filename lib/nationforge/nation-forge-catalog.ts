@@ -345,6 +345,7 @@ export type ForgeWizardProgressShape = {
   selections: NationForgeSelections;
   forgeWizardVersion?: number;
   suggestedNationName?: string;
+  reviewNarrativeMarkdown?: string;
 };
 
 const LEGACY_CONFIRM_STEP_INDEX = 11;

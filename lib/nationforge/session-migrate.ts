@@ -36,6 +36,7 @@ export function normalizeNation(n: Nation): Nation {
       stepIndex: fp.stepIndex,
       selections,
       suggestedNationName: fp.suggestedNationName,
+      reviewNarrativeMarkdown: fp.reviewNarrativeMarkdown,
       forgeWizardVersion: fp.forgeWizardVersion ?? 2,
     },
   };

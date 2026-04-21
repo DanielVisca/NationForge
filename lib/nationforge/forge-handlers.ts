@@ -13,6 +13,7 @@ import {
   stepIdAtIndex,
 } from "./nation-forge-catalog";
 import { resolveForgeToNation } from "./nation-forge-resolve";
+import { generateForgeReviewNarrativeOrHeuristic } from "./generate-forge-review-narrative";
 import { suggestNationNameOrHeuristic } from "./suggest-nation-name";
 import { migrateSession, normalizeNation } from "./session-migrate";
 import type { Crisis, GameSession, Nation, NationForgeProgress } from "./schema";
@@ -86,6 +87,7 @@ export function applyForgeActionToSession(
   }
 
   const namingIdx = FORGE_STEP_IDS.indexOf("naming");
+  const confirmIdx = FORGE_STEP_IDS.indexOf("confirm");
 
   if (action.type === "back") {
     const nextIndex = Math.max(0, progress.stepIndex - 1);
@@ -99,6 +101,9 @@ export function applyForgeActionToSession(
       selections,
       forgeWizardVersion: progress.forgeWizardVersion ?? 2,
     };
+    if (progress.stepIndex === confirmIdx) {
+      delete (nextProgress as unknown as Record<string, unknown>).reviewNarrativeMarkdown;
+    }
     if (nextIndex < namingIdx) {
       delete (nextProgress as unknown as Record<string, unknown>).suggestedNationName;
     }
@@ -122,7 +127,6 @@ export function applyForgeActionToSession(
     if (!isForgeSelectionsComplete(progress.selections)) {
       return { ok: false, error: "Complete all build selections first." };
     }
-    const confirmIdx = FORGE_STEP_IDS.indexOf("confirm");
     const nations = [...s.nations];
     nations[nationIndex] = normalizeNation({
       ...nation,
@@ -275,6 +279,49 @@ export async function applyLoadNameSuggestionToSession(
     forgeProgress: {
       ...progress,
       suggestedNationName: suggested,
+      forgeWizardVersion: progress.forgeWizardVersion ?? 2,
+    },
+  });
+  return { ok: true, session: { ...s, nations } };
+}
+
+export async function applyLoadReviewNarrativeToSession(
+  session: GameSession,
+  nationIndex: number,
+  force: boolean,
+): Promise<{ ok: true; session: GameSession } | { ok: false; error: string }> {
+  const s = migrateSession(session);
+  const nation = s.nations[nationIndex];
+  if (!nation || nation.forgeComplete || !nation.forgeProgress) {
+    return { ok: false, error: "Nation is not in forge mode." };
+  }
+  const progress = nation.forgeProgress;
+  const stepId = stepIdAtIndex(progress.stepIndex);
+  if (stepId !== "confirm") {
+    return { ok: false, error: "Review chronicle is only available on the review step." };
+  }
+  const resolved = resolveForgeToNation(progress.selections);
+  if (!("stats" in resolved)) {
+    return { ok: false, error: resolved.error };
+  }
+  if (!force && progress.reviewNarrativeMarkdown) {
+    return { ok: true, session: s };
+  }
+  const markdown = await generateForgeReviewNarrativeOrHeuristic({
+    nationName: nation.name,
+    spend: resolved.spend,
+    reserve: resolved.reserve,
+    stats: resolved.stats,
+    buildNotes: resolved.buildNotes,
+    synergyLines: resolved.synergyLines,
+  });
+  const nations = [...s.nations];
+  nations[nationIndex] = normalizeNation({
+    ...nation,
+    forgeComplete: false,
+    forgeProgress: {
+      ...progress,
+      reviewNarrativeMarkdown: markdown,
       forgeWizardVersion: progress.forgeWizardVersion ?? 2,
     },
   });

@@ -35,6 +35,8 @@ export type NationForgeProgress = {
   forgeWizardVersion?: number;
   /** AI suggestion on naming step; cleared when backing before naming */
   suggestedNationName?: string;
+  /** AI Markdown chronicle on confirm step; cleared when leaving review */
+  reviewNarrativeMarkdown?: string;
 };
 
 export type Nation = {
