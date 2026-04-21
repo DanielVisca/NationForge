@@ -28,6 +28,7 @@ function hintsForSelections(s: NationForgeSelections): StatHints {
 
   if (s.government) {
     const g = {
+      "gov-improvised": { stability: -8, power: -6, happiness: -4 },
       "gov-anarchy": { freedom: 12, stability: -10, power: -6 },
       "gov-tyranny": { power: 10, freedom: -12, stability: -4 },
       "gov-totalitarian": { power: 14, freedom: -18, stability: 4 },
@@ -42,6 +43,7 @@ function hintsForSelections(s: NationForgeSelections): StatHints {
   }
   if (s.economy) {
     const e = {
+      "econ-improvised": { prosperity: -8, stability: -4, happiness: -4 },
       "econ-feudal": { stability: 6, innovation: -4, prosperity: 2 },
       "econ-capitalism": { prosperity: 12, happiness: -6, innovation: 6 },
       "econ-corporatism": { power: 8, prosperity: 6, freedom: -8 },
@@ -54,6 +56,7 @@ function hintsForSelections(s: NationForgeSelections): StatHints {
   }
   if (s.labor) {
     const l = {
+      "labor-improvised": { happiness: -8, stability: -6, freedom: -4 },
       "labor-slavery": { prosperity: 6, freedom: -20, happiness: -16, stability: -12 },
       "labor-serfdom": { stability: 4, freedom: -10, innovation: -6 },
       "labor-collectivism": { stability: 6, happiness: 2, innovation: -4 },
@@ -73,6 +76,7 @@ function hintsForSelections(s: NationForgeSelections): StatHints {
   }
   if (s.education) {
     const ed = {
+      "edu-0": { innovation: -8, stability: -4, prosperity: -2 },
       "edu-5": { innovation: 2 },
       "edu-12": { innovation: 8, prosperity: 4 },
       "edu-20": { innovation: 14, prosperity: 6 },
@@ -82,6 +86,7 @@ function hintsForSelections(s: NationForgeSelections): StatHints {
   }
   if (s.infrastructure) {
     const inf = {
+      "infra-0": { prosperity: -6, stability: -6, happiness: -2 },
       "infra-5": { prosperity: 4 },
       "infra-12": { prosperity: 10, innovation: 4 },
       "infra-20": { prosperity: 12, happiness: 6, innovation: 4 },
@@ -90,6 +95,7 @@ function hintsForSelections(s: NationForgeSelections): StatHints {
   }
   if (s.foreignPolicy) {
     const f = {
+      "for-uncommitted": { power: -4, stability: -4, happiness: -2 },
       "for-iso": { stability: 4, power: -4 },
       "for-def": { stability: 6, power: 4 },
       "for-exp": { power: 10, stability: -6, prosperity: 4 },
@@ -99,6 +105,7 @@ function hintsForSelections(s: NationForgeSelections): StatHints {
   }
   if (s.demographics) {
     const d = {
+      "demo-unsettled": { stability: -8, happiness: -6, innovation: -4 },
       "demo-closed": { stability: 8, innovation: -2, happiness: -2 },
       "demo-controlled": { stability: 4, prosperity: 4 },
       "demo-open": { innovation: 10, happiness: 4, stability: -4 },
@@ -112,6 +119,7 @@ function hintsForSelections(s: NationForgeSelections): StatHints {
   }
   if (s.cultural) {
     const c = {
+      "cul-unsettled": { stability: -6, happiness: -6, innovation: -4 },
       "cul-trad": { stability: 8, innovation: -4 },
       "cul-mil": { power: 8, happiness: 2, innovation: -2 },
       "cul-prog": { innovation: 8, freedom: 6, stability: -2 },

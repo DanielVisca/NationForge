@@ -4,11 +4,12 @@ import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
 import {
-  choicesForStep,
+  choicesOrderedForBudget,
   computeSpend,
   FORGE_POINT_BUDGET,
   FORGE_STEP_IDS,
   type ForgeStepId,
+  type NationForgeSelections,
 } from "@/lib/nationforge/nation-forge-catalog";
 import { computeSynergies, resolveForgeToNation } from "@/lib/nationforge/nation-forge-resolve";
 import type { Nation } from "@/lib/nationforge/schema";
@@ -103,7 +104,13 @@ export default function NationForgeWizard({
         <span className="font-semibold text-zinc-900 dark:text-zinc-100">
           points remaining
         </span>
-        ; later sections stay hidden until you reach them.
+        ; later sections stay hidden until you reach them. Every pillar also
+        has an{" "}
+        <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+          underfunded (0 pt)
+        </span>{" "}
+        choice: bank points into reserve, but your nation pays for it in-world
+        with weaker stats — or use it when you cannot afford anything else.
       </p>
 
       <div className="mt-6 rounded-2xl border border-amber-200/80 bg-amber-50/90 px-5 py-4 dark:border-amber-900/40 dark:bg-amber-950/30">
@@ -167,24 +174,37 @@ export default function NationForgeWizard({
 
       {stepId !== "confirm" && stepId !== "demographicsAddons" ? (
         <ul className="mt-6 space-y-2">
-          {(choicesForStep(stepId) ?? []).map((c) => (
-            <li key={c.id}>
-              <button
-                type="button"
-                disabled={busy}
-                className="flex w-full flex-col items-start rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left text-sm transition hover:border-zinc-400 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:hover:border-zinc-500"
-                onClick={() => void postForge({ type: "pick", choiceId: c.id })}
-              >
-                <span className="font-medium text-zinc-900 dark:text-zinc-50">
-                  {c.label}{" "}
-                  <span className="font-mono text-zinc-500">· {c.cost} pts</span>
-                </span>
-                {c.blurb ? (
-                  <span className="mt-1 text-xs text-zinc-500">{c.blurb}</span>
-                ) : null}
-              </button>
-            </li>
-          ))}
+          {choicesOrderedForBudget(stepId, pointsLeft).map((c) => {
+            const affordable = c.cost <= pointsLeft;
+            return (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  disabled={busy || !affordable}
+                  title={
+                    affordable
+                      ? undefined
+                      : `Need ${c.cost - pointsLeft} more points (go Back or pick a cheaper / 0 pt option).`
+                  }
+                  className="flex w-full flex-col items-start rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left text-sm transition hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-950 dark:hover:border-zinc-500"
+                  onClick={() => void postForge({ type: "pick", choiceId: c.id })}
+                >
+                  <span className="font-medium text-zinc-900 dark:text-zinc-50">
+                    {c.label}{" "}
+                    <span className="font-mono text-zinc-500">· {c.cost} pts</span>
+                  </span>
+                  {c.blurb ? (
+                    <span className="mt-1 text-xs text-zinc-500">{c.blurb}</span>
+                  ) : null}
+                  {!affordable ? (
+                    <span className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+                      Not affordable with current budget
+                    </span>
+                  ) : null}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
 
@@ -192,6 +212,7 @@ export default function NationForgeWizard({
         <DemographicsAddonsPanel
           key={`addons-${progress.stepIndex}-${(progress.selections.demographicsAddons ?? []).join(",")}`}
           initialIds={progress.selections.demographicsAddons ?? []}
+          selections={progress.selections}
           busy={busy}
           postForge={postForge}
         />
@@ -232,14 +253,19 @@ export default function NationForgeWizard({
 
 function DemographicsAddonsPanel({
   initialIds,
+  selections,
   busy,
   postForge,
 }: {
   initialIds: string[];
+  selections: NationForgeSelections;
   busy: boolean;
   postForge: (body: Record<string, unknown>) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<string[]>(() => [...initialIds]);
+
+  const spendWithDraft = (ids: string[]) =>
+    computeSpend({ ...selections, demographicsAddons: ids });
 
   return (
     <div className="mt-6 space-y-4">
@@ -247,16 +273,25 @@ function DemographicsAddonsPanel({
         Toggle any combination that fits your remaining budget. Unknown future
         steps stay hidden — if you overspend early, you may need to go back.
       </p>
-      {(choicesForStep("demographicsAddons") ?? []).map((c) => {
+      {choicesOrderedForBudget(
+        "demographicsAddons",
+        FORGE_POINT_BUDGET - spendWithDraft(draft),
+      ).map((c) => {
         const on = draft.includes(c.id);
+        const nextIfToggle = on
+          ? draft.filter((x) => x !== c.id)
+          : [...draft, c.id];
+        const over = spendWithDraft(nextIfToggle) > FORGE_POINT_BUDGET;
+        const disableToggle = !on && over;
         return (
           <label
             key={c.id}
-            className="flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-700 dark:bg-zinc-950"
+            className={`flex items-start gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-700 dark:bg-zinc-950 ${disableToggle ? "opacity-40" : ""}`}
           >
             <input
               type="checkbox"
               className="mt-1"
+              disabled={busy || disableToggle}
               checked={on}
               onChange={() => {
                 setDraft((prev) =>
