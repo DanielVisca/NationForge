@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:xai": "node --env-file=.env scripts/test-xai-grok.mjs"
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.170",
