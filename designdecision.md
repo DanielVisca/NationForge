@@ -5,7 +5,7 @@
 - **Responses API + history**: The UI persists full transcripts under `.data/conversations.json` for durable history and reloads. For each new *user* turn after the first reply, the server passes xAI’s `previous_response_id` (stored per conversation as `lastResponseId`) so Grok can continue the server-side chain without resending the entire transcript. Regeneration requests omit `previous_response_id` so the model sees a fresh full `input` for that interaction.
 
 - **Vercel AI SDK**: We use `streamText` with `@ai-sdk/xai` `xai.responses(model)` so streaming, multi-step tool execution, and xAI-specific options stay aligned with current provider support.
-- **Default Grok model** (`lib/xai.ts`): `grok-4-1-fast-reasoning` when `XAI_MODEL` is unset — prioritizes latency for streamed chat and NationForge. Set `XAI_MODEL=grok-4.20-0309-reasoning` for the slower, heavier reasoning tier if quality matters more than speed.
+- **Default Grok model** (`lib/xai.ts`): `grok-4-1-fast-non-reasoning` when `XAI_MODEL` is unset — fastest/cheapest tier for streamed chat and NationForge. Set `XAI_MODEL=grok-4-1-fast-reasoning` or `grok-4.20-0309-reasoning` if you want heavier reasoning at higher cost/latency.
 
 ## NationForge (game)
 

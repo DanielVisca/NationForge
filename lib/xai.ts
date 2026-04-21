@@ -10,9 +10,9 @@ export const xai = createXai({
   baseURL: process.env.XAI_BASE_URL ?? "https://api.x.ai/v1",
 });
 
-/** Default when `XAI_MODEL` unset: fast tier for lower latency (chat + NationForge GM). Override for heavier reasoning. */
+/** Default when `XAI_MODEL` unset: fastest / cheapest tier (chat + NationForge). Override for reasoning models. */
 export const defaultModelId =
-  process.env.XAI_MODEL ?? "grok-4-1-fast-reasoning";
+  process.env.XAI_MODEL ?? "grok-4-1-fast-non-reasoning";
 
 export function requireXaiApiKey(): string {
   if (!apiKey?.trim()) {

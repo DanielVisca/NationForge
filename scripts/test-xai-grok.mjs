@@ -7,7 +7,7 @@ import { generateText } from "ai";
 
 const apiKey = process.env.XAI_API_KEY ?? process.env.GROK_API_KEY;
 const baseURL = process.env.XAI_BASE_URL ?? "https://api.x.ai/v1";
-const modelId = process.env.XAI_MODEL ?? "grok-4-1-fast-reasoning";
+const modelId = process.env.XAI_MODEL ?? "grok-4-1-fast-non-reasoning";
 
 if (!apiKey?.trim()) {
   console.error("Missing XAI_API_KEY (or GROK_API_KEY) in environment.");
