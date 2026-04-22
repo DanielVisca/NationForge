@@ -126,6 +126,17 @@ export default function NationForgeBoard() {
   const sessionId = params.sessionId as string;
   const searchParams = useSearchParams();
   const urlToken = searchParams.get("token");
+  /** `router.replace(?token=)` can lag behind `useSearchParams` in the same tab; hold token until URL catches up. */
+  const [seatTokenBridge, setSeatTokenBridge] = useState<string | null>(null);
+  const seatToken = urlToken ?? seatTokenBridge;
+
+  useEffect(() => {
+    if (urlToken) setSeatTokenBridge(null);
+  }, [urlToken]);
+
+  useEffect(() => {
+    setSeatTokenBridge(null);
+  }, [sessionId]);
 
   const [session, setSession] = useState<PublicGameSession | null>(null);
   const [hostTokens] = useState<Record<string, string> | null>(() => {
@@ -172,7 +183,7 @@ export default function NationForgeBoard() {
   const [replyDraftById, setReplyDraftById] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
-    const token = urlToken ?? "";
+    const token = seatToken ?? "";
     const res = await fetch(
       `/api/nationforge/sessions/${sessionId}${token ? `?token=${encodeURIComponent(token)}` : ""}`,
     );
@@ -190,7 +201,7 @@ export default function NationForgeBoard() {
       if (data.nations[0]) return data.activeNationId ?? data.nations[0]!.id;
       return prev;
     });
-  }, [sessionId, urlToken]);
+  }, [sessionId, seatToken]);
 
   useEffect(() => {
     startTransition(() => {
@@ -277,13 +288,13 @@ export default function NationForgeBoard() {
   /** Seated forged players write only as their nation (single POV). */
   useEffect(() => {
     if (!session?.viewerNationId) return;
-    if (!urlToken || !myNation?.forgeComplete) return;
+    if (!seatToken || !myNation?.forgeComplete) return;
     setPovNationId(session.viewerNationId);
-  }, [session?.viewerNationId, urlToken, myNation?.forgeComplete]);
+  }, [session?.viewerNationId, seatToken, myNation?.forgeComplete]);
 
   useEffect(() => {
     domesticDirtyRef.current = false;
-  }, [urlToken, session?.viewerNationId]);
+  }, [seatToken, session?.viewerNationId]);
 
   useEffect(() => {
     if (!myNation) return;
@@ -315,7 +326,7 @@ export default function NationForgeBoard() {
     };
   }, [myNation]);
 
-  const showWizard = Boolean(urlToken && wizardNation);
+  const showWizard = Boolean(seatToken && wizardNation);
 
   const povNation = useMemo(
     () => session?.nations.find((n) => n.id === povNationId),
@@ -324,7 +335,7 @@ export default function NationForgeBoard() {
 
   const waitingForTableOpen = Boolean(
     session &&
-      urlToken &&
+      seatToken &&
       myNation?.forgeComplete &&
       !session.gameStarted &&
       session.nations.length > 0,
@@ -346,7 +357,7 @@ export default function NationForgeBoard() {
 
   const isOpeningBeatSeat = Boolean(
     session &&
-      urlToken &&
+      seatToken &&
       session.viewerNationId &&
       session.viewerNationId === session.activeNationId,
   );
@@ -421,6 +432,7 @@ export default function NationForgeBoard() {
         token: string;
       };
       mergeSeatToken(data.sessionId, data.nationId, data.token);
+      setSeatTokenBridge(data.token);
       router.replace(
         `/nationforge/${data.sessionId}?token=${encodeURIComponent(data.token)}`,
       );
@@ -490,14 +502,14 @@ export default function NationForgeBoard() {
 
   const saveDomesticScratch = useCallback(
     async (value: string) => {
-      if (!sessionId || !urlToken) return;
+      if (!sessionId || !seatToken) return;
       const trimmed = value.trim();
       if (trimmed.length > MAX_DOMESTIC_SCRATCH_LENGTH) return;
       setDomesticSaveState("saving");
       setDomesticSaveError(null);
       try {
         const res = await fetch(
-          `/api/nationforge/sessions/${sessionId}/domestic?token=${encodeURIComponent(urlToken)}`,
+          `/api/nationforge/sessions/${sessionId}/domestic?token=${encodeURIComponent(seatToken)}`,
           {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -525,12 +537,12 @@ export default function NationForgeBoard() {
         setDomesticSaveError(e instanceof Error ? e.message : "Save failed");
       }
     },
-    [sessionId, urlToken],
+    [sessionId, seatToken],
   );
 
   const scheduleDomesticSave = useCallback(
     (value: string) => {
-      if (!urlToken || !myNation?.forgeComplete) return;
+      if (!seatToken || !myNation?.forgeComplete) return;
       if (domesticDebounceRef.current) {
         clearTimeout(domesticDebounceRef.current);
       }
@@ -539,11 +551,11 @@ export default function NationForgeBoard() {
         void saveDomesticScratch(value);
       }, 450);
     },
-    [saveDomesticScratch, urlToken, myNation?.forgeComplete],
+    [saveDomesticScratch, seatToken, myNation?.forgeComplete],
   );
 
   const sendDiplomacy = useCallback(async () => {
-    if (!sessionId || !urlToken || !diplomacyToId.trim()) return;
+    if (!sessionId || !seatToken || !diplomacyToId.trim()) return;
     const msg = diplomacyMessage.trim();
     if (!msg) {
       setDiplomacyError("Write a message before sending.");
@@ -553,7 +565,7 @@ export default function NationForgeBoard() {
     setDiplomacyError(null);
     try {
       const res = await fetch(
-        `/api/nationforge/sessions/${sessionId}/diplomacy?token=${encodeURIComponent(urlToken)}`,
+        `/api/nationforge/sessions/${sessionId}/diplomacy?token=${encodeURIComponent(seatToken)}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -577,11 +589,11 @@ export default function NationForgeBoard() {
     } finally {
       setDiplomacyBusy(false);
     }
-  }, [sessionId, urlToken, diplomacyToId, diplomacyMessage]);
+  }, [sessionId, seatToken, diplomacyToId, diplomacyMessage]);
 
   const sendDiplomacyReply = useCallback(
     async (outreachId: string, text: string) => {
-      if (!sessionId || !urlToken) return;
+      if (!sessionId || !seatToken) return;
       const trimmed = text.trim();
       if (!trimmed) {
         setDiplomacyError("Reply cannot be empty.");
@@ -591,7 +603,7 @@ export default function NationForgeBoard() {
       setDiplomacyError(null);
       try {
         const res = await fetch(
-          `/api/nationforge/sessions/${sessionId}/diplomacy/${encodeURIComponent(outreachId)}/reply?token=${encodeURIComponent(urlToken)}`,
+          `/api/nationforge/sessions/${sessionId}/diplomacy/${encodeURIComponent(outreachId)}/reply?token=${encodeURIComponent(seatToken)}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -620,7 +632,7 @@ export default function NationForgeBoard() {
         setDiplomacyBusy(false);
       }
     },
-    [sessionId, urlToken],
+    [sessionId, seatToken],
   );
 
   const submitOpeningBrief = useCallback(async () => {
@@ -680,7 +692,7 @@ export default function NationForgeBoard() {
   }, [sessionId, session, load]);
 
   useEffect(() => {
-    if (!session || !urlToken || !myNation?.forgeComplete) return;
+    if (!session || !seatToken || !myNation?.forgeComplete) return;
     if (waitingForTableOpen) return;
     if (!session.gameStarted || !session.crisis) return;
     if (
@@ -703,7 +715,7 @@ export default function NationForgeBoard() {
     })();
   }, [
     session,
-    urlToken,
+    seatToken,
     myNation?.forgeComplete,
     waitingForTableOpen,
     lastGmChapter,
@@ -735,7 +747,7 @@ export default function NationForgeBoard() {
         </div>
         <NationForgeWizard
           sessionId={sessionId}
-          token={urlToken!}
+          token={seatToken!}
           nation={wizardNation}
           onDone={load}
         />
@@ -744,7 +756,7 @@ export default function NationForgeBoard() {
   }
 
   const seatPovLocked = Boolean(
-    urlToken && session.viewerNationId && myNation?.forgeComplete,
+    seatToken && session.viewerNationId && myNation?.forgeComplete,
   );
 
   return (
@@ -825,7 +837,7 @@ export default function NationForgeBoard() {
         </div>
       ) : null}
 
-      {!urlToken ? (
+      {!seatToken ? (
         <section className="rounded-2xl border border-blue-200 bg-blue-50/80 px-5 py-5 dark:border-blue-900/50 dark:bg-blue-950/30">
           <h2 className="text-sm font-semibold text-blue-950 dark:text-blue-100">
             Join the table
@@ -871,7 +883,7 @@ export default function NationForgeBoard() {
       !waitingForTableOpen &&
       crisis &&
       !introDelivered &&
-      urlToken &&
+      seatToken &&
       myNation?.forgeComplete ? (
         <section className="rounded-2xl border border-amber-200/90 bg-gradient-to-b from-amber-50/95 to-white px-5 py-6 shadow-sm dark:border-amber-900/40 dark:from-amber-950/40 dark:to-zinc-950">
           <p className="text-xs font-medium uppercase tracking-wide text-amber-900 dark:text-amber-200">
@@ -1111,7 +1123,7 @@ export default function NationForgeBoard() {
                       More with this send (optional)
                     </summary>
                     <div className="space-y-4 border-t border-zinc-200 p-3 dark:border-zinc-700">
-                      {urlToken && myNation?.forgeComplete ? (
+                      {seatToken && myNation?.forgeComplete ? (
                         <div>
                           <p className="text-[10px] font-semibold uppercase text-zinc-500 dark:text-zinc-400">
                             Your seat
@@ -1369,7 +1381,7 @@ export default function NationForgeBoard() {
                   </ul>
                 </section>
               ) : null}
-              {urlToken && myNation?.forgeComplete ? (
+              {seatToken && myNation?.forgeComplete ? (
                 <section className="rounded-lg border border-indigo-200/90 bg-indigo-50/70 p-3 dark:border-indigo-900/40 dark:bg-indigo-950/35">
                   <h3 className="text-xs font-semibold uppercase text-indigo-900 dark:text-indigo-200">
                     Structured messages (optional)
