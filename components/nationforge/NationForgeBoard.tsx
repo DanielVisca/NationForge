@@ -160,7 +160,6 @@ export default function NationForgeBoard() {
   const [secretAction, setSecretAction] = useState("");
   const [reallocNotes, setReallocNotes] = useState("");
 
-  const [joinName, setJoinName] = useState("");
   const [joinBusy, setJoinBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
 
@@ -419,7 +418,7 @@ export default function NationForgeBoard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           roomCode: session.roomCode,
-          displayName: joinName.trim(),
+          displayName: "",
         }),
       });
       if (!res.ok) {
@@ -441,7 +440,7 @@ export default function NationForgeBoard() {
     } finally {
       setJoinBusy(false);
     }
-  }, [session, joinName, router]);
+  }, [session, router]);
 
   const submitTurn = useCallback(async () => {
     if (!sessionId) return;
@@ -778,9 +777,10 @@ export default function NationForgeBoard() {
         <details className="max-w-md rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
           <summary className="cursor-pointer font-semibold">Share & join</summary>
           <p className="mt-2 text-zinc-600 dark:text-zinc-400">
-            Others start the nation forge with the room code (optional nickname
-            until they name the nation). They appear as official table seats only
-            after the builder is finished. Or use this link:
+            Others join with the room code and go straight into the builder; the
+            nation name is set in the forge (suggested, editable). They count as
+            official table seats only after the builder is finished. Or use this
+            link:
           </p>
           <div className="mt-2 font-mono break-all text-[11px]">
             {origin}/nationforge/join?code={session.roomCode}
@@ -843,26 +843,20 @@ export default function NationForgeBoard() {
             Join the table
           </h2>
           <p className="mt-2 text-sm text-blue-900/90 dark:text-blue-200/90">
-            You are spectating without a seat token. Start the nation forge to
-            run the 100-point builder — other players only see you as an official
-            seat at the table after you finish and name your nation. Optional: a
-            short nickname here labels your builder until then. You can join after
-            others have started; your builder runs privately until you finish.
+            You are spectating without a seat token. Open the nation builder to
+            run the 100-point forge — other players only see you as an official
+            seat after you finish; your polity&apos;s name is chosen in the forge
+            (with a suggestion you can overwrite). You can join after others have
+            started; your builder runs privately until you finish.
           </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <input
-              className="min-w-[12rem] flex-1 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm dark:border-blue-900 dark:bg-zinc-950"
-              value={joinName}
-              onChange={(e) => setJoinName(e.target.value)}
-              placeholder="Optional seat nickname"
-            />
+          <div className="mt-4">
             <button
               type="button"
               disabled={joinBusy}
               className="rounded-lg bg-blue-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-blue-200 dark:text-blue-950"
               onClick={() => void claimSeat()}
             >
-              {joinBusy ? "…" : "Start nation forge"}
+              {joinBusy ? "…" : "Open nation builder"}
             </button>
           </div>
           {joinError ? (
