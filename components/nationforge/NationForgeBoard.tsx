@@ -962,9 +962,9 @@ export default function NationForgeBoard() {
                             GM
                           </p>
                           {prose.trim() ? (
-                            <p className="mt-1 whitespace-pre-wrap text-zinc-900 dark:text-zinc-50">
-                              {prose}
-                            </p>
+                            <div className="mt-1 text-zinc-900 dark:text-zinc-50">
+                              <NationForgeChatMarkdown source={prose} />
+                            </div>
                           ) : (
                             <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
                               Updated the table (stats, public log, or event).
@@ -991,9 +991,9 @@ export default function NationForgeBoard() {
                           Focus: {crisisInvolvedNames.join(", ")}
                         </p>
                       ) : null}
-                      <p className="mt-2 whitespace-pre-wrap text-sm font-medium text-zinc-900 dark:text-zinc-50">
-                        {crisis.prompt}
-                      </p>
+                      <div className="mt-2 text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                        <NationForgeChatMarkdown source={crisis.prompt} />
+                      </div>
                     </div>
                   </div>
                 ) : null}
@@ -1004,10 +1004,10 @@ export default function NationForgeBoard() {
                         GM · writing
                       </p>
                       {gmStreamText ? (
-                        <p className="mt-1 whitespace-pre-wrap font-mono text-xs leading-relaxed text-zinc-800 dark:text-zinc-200">
-                          {gmStreamText}
+                        <div className="mt-1 text-xs leading-relaxed text-zinc-800 dark:text-zinc-200">
+                          <NationForgeChatMarkdown source={gmStreamText} />
                           <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-sky-600 dark:bg-sky-400" />
-                        </p>
+                        </div>
                       ) : (
                         <p className="mt-1 text-xs text-sky-900/90 dark:text-sky-100/85">
                           Composing this beat…
@@ -1067,12 +1067,12 @@ export default function NationForgeBoard() {
                     </label>
                     <p className="mt-1 text-xs text-zinc-500">
                       Describe what your nation does.{" "}
-                      <span className="font-semibold">Markdown</span> applies to
-                      your messages in the transcript (
+                      <span className="font-semibold">Markdown</span> in the
+                      transcript renders for you, the GM, and inflection prompts (
                       <code className="rounded bg-zinc-200/80 px-0.5 dark:bg-zinc-700">
                         **bold**
                       </code>
-                      , lists, links); GM and inflection text stay plain.{" "}
+                      , headings, lists, links).{" "}
                       <span className="font-semibold">Enter</span> starts a new
                       line; send with the button. Optional fields are under{" "}
                       <span className="font-semibold">More with this send</span>.
