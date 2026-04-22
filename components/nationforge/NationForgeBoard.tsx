@@ -84,8 +84,6 @@ let openingBriefCooldownUntil = 0;
 
 const POLL_MS = 2500;
 const POLL_MS_GM_RUNNING = 650;
-/** Above this length, inflection prompt starts clamped with a show-more control. */
-const CRISIS_PROMPT_COLLAPSE_LEN = 220;
 
 async function readFetchErrorBody(res: Response): Promise<string> {
   const t = await res.text();
@@ -171,8 +169,6 @@ export default function NationForgeBoard() {
   /** Screen reader: announce each crisis id once (not on every poll). */
   const inflectionAnnouncedCrisisIdRef = useRef<string | null>(null);
   const [inflectionAriaNotice, setInflectionAriaNotice] = useState("");
-  const [inflectionPromptExpanded, setInflectionPromptExpanded] =
-    useState(false);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
   const [diplomacyToId, setDiplomacyToId] = useState("");
@@ -378,10 +374,6 @@ export default function NationForgeBoard() {
     const clip = p.length > 160 ? `${p.slice(0, 160)}…` : p;
     setInflectionAriaNotice(`New inflection. ${clip}`);
   }, [session?.crisis, inflectionActive]);
-
-  useEffect(() => {
-    setInflectionPromptExpanded(false);
-  }, [session?.crisis?.id]);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -998,37 +990,9 @@ export default function NationForgeBoard() {
                           Focus: {crisisInvolvedNames.join(", ")}
                         </p>
                       ) : null}
-                      {crisis.prompt.length > CRISIS_PROMPT_COLLAPSE_LEN ? (
-                        <div className="mt-2">
-                          <div
-                            className={
-                              inflectionPromptExpanded
-                                ? ""
-                                : "max-h-[10.5rem] overflow-hidden"
-                            }
-                          >
-                            <NationForgeChatMarkdown
-                              source={crisis.prompt}
-                              className="text-sm font-medium text-zinc-900 dark:text-zinc-50"
-                            />
-                          </div>
-                          <button
-                            type="button"
-                            className="mt-1.5 text-xs font-medium text-blue-700 underline decoration-blue-700/40 underline-offset-2 dark:text-blue-400"
-                            onClick={() =>
-                              setInflectionPromptExpanded((open) => !open)
-                            }
-                          >
-                            {inflectionPromptExpanded
-                              ? "Show less"
-                              : "Show full prompt"}
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="mt-2 text-sm font-medium text-zinc-900 dark:text-zinc-50">
-                          <NationForgeChatMarkdown source={crisis.prompt} />
-                        </div>
-                      )}
+                      <div className="mt-2 text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                        <NationForgeChatMarkdown source={crisis.prompt} />
+                      </div>
                     </div>
                   </div>
                 ) : null}
