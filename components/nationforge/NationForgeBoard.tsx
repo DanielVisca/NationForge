@@ -934,13 +934,18 @@ export default function NationForgeBoard() {
                     Conversation with the GM will appear here.
                   </p>
                 ) : null}
-                {session.gmMessages.map((m) => {
+                {session.gmMessages.map((m, msgIndex) => {
+                  const messageKey = `${msgIndex}-${
+                    typeof m.id === "string" && m.id.trim().length > 0
+                      ? m.id
+                      : "no-id"
+                  }`;
                   if (m.role === "user") {
                     const raw = userMessageTextParts(m);
                     const body = displayPlayerChatBody(raw);
                     if (!body.trim()) return null;
                     return (
-                      <div key={m.id} className="flex justify-end">
+                      <div key={messageKey} className="flex justify-end">
                         <div className="max-w-[92%] rounded-2xl border border-zinc-200 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-zinc-600 dark:bg-zinc-950">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
                             You
@@ -957,7 +962,7 @@ export default function NationForgeBoard() {
                     const delivered = assistantMessageIndicatesGmDelivery(m);
                     if (!prose.trim() && !delivered) return null;
                     return (
-                      <div key={m.id} className="flex justify-start">
+                      <div key={messageKey} className="flex justify-start">
                         <div className="max-w-[92%] rounded-2xl border border-violet-200/90 bg-violet-50/70 px-4 py-2.5 text-sm dark:border-violet-800/50 dark:bg-violet-950/35">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-800 dark:text-violet-200">
                             GM
