@@ -30,6 +30,7 @@ import {
   type Nation,
 } from "@/lib/nationforge/schema";
 
+import { NationForgeChatMarkdown } from "./NationForgeChatMarkdown";
 import NationForgeWizard from "./NationForgeWizard";
 
 function StatRibbon({ nation }: { nation: Nation }) {
@@ -950,9 +951,9 @@ export default function NationForgeBoard() {
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
                             You
                           </p>
-                          <p className="mt-1 whitespace-pre-wrap text-zinc-900 dark:text-zinc-100">
-                            {body}
-                          </p>
+                          <div className="mt-1 text-zinc-900 dark:text-zinc-100">
+                            <NationForgeChatMarkdown source={body} />
+                          </div>
                         </div>
                       </div>
                     );
@@ -968,9 +969,9 @@ export default function NationForgeBoard() {
                             GM
                           </p>
                           {prose.trim() ? (
-                            <p className="mt-1 whitespace-pre-wrap text-zinc-900 dark:text-zinc-50">
-                              {prose}
-                            </p>
+                            <div className="mt-1 text-zinc-900 dark:text-zinc-50">
+                              <NationForgeChatMarkdown source={prose} />
+                            </div>
                           ) : (
                             <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
                               Updated the table (stats, public log, or event).
@@ -999,15 +1000,18 @@ export default function NationForgeBoard() {
                       ) : null}
                       {crisis.prompt.length > CRISIS_PROMPT_COLLAPSE_LEN ? (
                         <div className="mt-2">
-                          <p
-                            className={`whitespace-pre-wrap text-sm font-medium text-zinc-900 dark:text-zinc-50 ${
+                          <div
+                            className={
                               inflectionPromptExpanded
                                 ? ""
-                                : "line-clamp-6 overflow-hidden"
-                            }`}
+                                : "max-h-[10.5rem] overflow-hidden"
+                            }
                           >
-                            {crisis.prompt}
-                          </p>
+                            <NationForgeChatMarkdown
+                              source={crisis.prompt}
+                              className="text-sm font-medium text-zinc-900 dark:text-zinc-50"
+                            />
+                          </div>
                           <button
                             type="button"
                             className="mt-1.5 text-xs font-medium text-blue-700 underline decoration-blue-700/40 underline-offset-2 dark:text-blue-400"
@@ -1021,9 +1025,9 @@ export default function NationForgeBoard() {
                           </button>
                         </div>
                       ) : (
-                        <p className="mt-2 whitespace-pre-wrap text-sm font-medium text-zinc-900 dark:text-zinc-50">
-                          {crisis.prompt}
-                        </p>
+                        <div className="mt-2 text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                          <NationForgeChatMarkdown source={crisis.prompt} />
+                        </div>
                       )}
                     </div>
                   </div>
@@ -1035,10 +1039,10 @@ export default function NationForgeBoard() {
                         GM · writing
                       </p>
                       {gmStreamText ? (
-                        <p className="mt-1 whitespace-pre-wrap font-mono text-xs leading-relaxed text-zinc-800 dark:text-zinc-200">
-                          {gmStreamText}
+                        <div className="mt-1 text-xs leading-relaxed text-zinc-800 dark:text-zinc-200">
+                          <NationForgeChatMarkdown source={gmStreamText} />
                           <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-sky-600 dark:bg-sky-400" />
-                        </p>
+                        </div>
                       ) : (
                         <p className="mt-1 text-xs text-sky-900/90 dark:text-sky-100/85">
                           Composing this beat…
@@ -1098,9 +1102,14 @@ export default function NationForgeBoard() {
                     </label>
                     <p className="mt-1 text-xs text-zinc-500">
                       Describe what your nation does.{" "}
+                      <span className="font-semibold">Markdown</span> is
+                      rendered in the chat (
+                      <code className="rounded bg-zinc-200/80 px-0.5 dark:bg-zinc-700">
+                        **bold**
+                      </code>
+                      , lists, links, etc.).{" "}
                       <span className="font-semibold">Enter</span> starts a new
-                      line; send with the button. Optional fields (stats sheet,
-                      governance, diplomacy lines) are under{" "}
+                      line; send with the button. Optional fields are under{" "}
                       <span className="font-semibold">More with this send</span>.
                     </p>
                     <textarea
@@ -1112,6 +1121,19 @@ export default function NationForgeBoard() {
                       spellCheck
                       disabled={!session.gameStarted || !povNation?.forgeComplete}
                     />
+                    {narrative.trim() ? (
+                      <details className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50/90 dark:border-zinc-700 dark:bg-zinc-900/50">
+                        <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                          Preview formatted (Markdown)
+                        </summary>
+                        <div className="max-h-56 overflow-y-auto border-t border-zinc-200 px-3 py-2 dark:border-zinc-700">
+                          <NationForgeChatMarkdown
+                            source={narrative}
+                            className="text-sm text-zinc-800 dark:text-zinc-200"
+                          />
+                        </div>
+                      </details>
+                    ) : null}
                   </div>
                   <details className="rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900/40">
                     <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
