@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { normalizeXaiTtsVoiceId } from "@/lib/nationforge/tts-voices";
 import { requireXaiApiKey } from "@/lib/xai";
 
 export const maxDuration = 60;
@@ -70,10 +71,11 @@ export async function POST(req: Request) {
     );
   }
 
-  const voice_id =
+  const voice_id = normalizeXaiTtsVoiceId(
     typeof body.voice_id === "string" && body.voice_id.trim()
       ? body.voice_id.trim()
-      : process.env.XAI_TTS_VOICE_ID ?? "eve";
+      : process.env.XAI_TTS_VOICE_ID,
+  );
   const language =
     typeof body.language === "string" && body.language.trim()
       ? body.language.trim()

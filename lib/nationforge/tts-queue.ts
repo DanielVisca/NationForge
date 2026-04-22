@@ -1,5 +1,7 @@
 "use client";
 
+import { normalizeXaiTtsVoiceId } from "@/lib/nationforge/tts-voices";
+
 type TtsQueueApi = {
   enqueue: (text: string) => void;
   clear: () => void;
@@ -9,8 +11,11 @@ type TtsQueueApi = {
 /**
  * Sequential TTS playback: fetches MP3 from `/api/nationforge/tts`, plays with HTMLAudioElement.
  * New text while playing is queued; `clear` stops current audio and drops pending chunks.
+ * `getVoiceId` is read on each request so the user can change voice without rebuilding the queue.
  */
-export function createNationForgeTtsQueue(): TtsQueueApi {
+export function createNationForgeTtsQueue(
+  getVoiceId: () => string = () => "eve",
+): TtsQueueApi {
   const pending: string[] = [];
   let draining = false;
   let disposed = false;
@@ -54,10 +59,11 @@ export function createNationForgeTtsQueue(): TtsQueueApi {
   const fetchSpeak = async (raw: string): Promise<void> => {
     const text = raw.trim();
     if (!text || disposed) return;
+    const voice_id = normalizeXaiTtsVoiceId(getVoiceId());
     const res = await fetch("/api/nationforge/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, voice_id, language: "en" }),
     });
     if (!res.ok) {
       const err = await res.text().catch(() => "");

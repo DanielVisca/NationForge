@@ -25,6 +25,11 @@ import {
   markdownishToSpeechText,
 } from "@/lib/nationforge/markdown-ish-to-speech-text";
 import { createNationForgeTtsQueue } from "@/lib/nationforge/tts-queue";
+import {
+  normalizeXaiTtsVoiceId,
+  XAI_TTS_VOICES,
+  type XaiTtsVoiceId,
+} from "@/lib/nationforge/tts-voices";
 import { consumeGmTextStream } from "@/lib/nationforge/consume-gm-stream";
 import { buildOpeningBriefPlayerMessage } from "@/lib/nationforge/opening-brief-narrative";
 import { playerTurnChatDisplayBody } from "@/lib/nationforge/player-input";
@@ -48,6 +53,7 @@ import { NationForgeChatMarkdown } from "./NationForgeChatMarkdown";
 import NationForgeWizard from "./NationForgeWizard";
 
 const NATIONFORGE_TTS_LS = "nationforge-tts-enabled";
+const NATIONFORGE_TTS_VOICE_LS = "nationforge-tts-voice";
 
 function StatRibbon({ nation }: { nation: Nation }) {
   return (
@@ -181,6 +187,9 @@ export default function NationForgeBoard() {
   const [joinError, setJoinError] = useState<string | null>(null);
 
   const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [ttsVoiceId, setTtsVoiceId] = useState<XaiTtsVoiceId>("eve");
+  const ttsVoiceIdRef = useRef<XaiTtsVoiceId>("eve");
+  ttsVoiceIdRef.current = ttsVoiceId;
   const ttsQueueRef = useRef<ReturnType<typeof createNationForgeTtsQueue> | null>(
     null,
   );
@@ -188,7 +197,11 @@ export default function NationForgeBoard() {
   const ttsSeenKeysRef = useRef<Set<string>>(new Set());
   const ttsSessionBoundRef = useRef<string | null>(null);
   const getTtsQueue = useCallback(() => {
-    if (!ttsQueueRef.current) ttsQueueRef.current = createNationForgeTtsQueue();
+    if (!ttsQueueRef.current) {
+      ttsQueueRef.current = createNationForgeTtsQueue(
+        () => ttsVoiceIdRef.current,
+      );
+    }
     return ttsQueueRef.current;
   }, []);
 
@@ -447,6 +460,8 @@ export default function NationForgeBoard() {
     try {
       const v = localStorage.getItem(NATIONFORGE_TTS_LS);
       if (v === "1") setTtsEnabled(true);
+      const voiceRaw = localStorage.getItem(NATIONFORGE_TTS_VOICE_LS);
+      if (voiceRaw) setTtsVoiceId(normalizeXaiTtsVoiceId(voiceRaw));
     } catch {
       /* ignore */
     }
@@ -459,6 +474,14 @@ export default function NationForgeBoard() {
       /* ignore */
     }
   }, [ttsEnabled]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NATIONFORGE_TTS_VOICE_LS, ttsVoiceId);
+    } catch {
+      /* ignore */
+    }
+  }, [ttsVoiceId]);
 
   useEffect(() => {
     return () => {
@@ -1067,7 +1090,7 @@ export default function NationForgeBoard() {
           {session.gameStarted && !waitingForTableOpen && introDelivered ? (
             <section className="flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/90">
               <h2 className="sr-only">NationForge chat</h2>
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200/80 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200/80 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
                 <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-700 dark:text-zinc-200">
                   <input
                     type="checkbox"
@@ -1086,8 +1109,30 @@ export default function NationForgeBoard() {
                     </span>
                   </span>
                 </label>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+                  <label htmlFor="nationforge-tts-voice" className="sr-only">
+                    TTS voice
+                  </label>
+                  <span className="hidden sm:inline text-zinc-500 dark:text-zinc-400">
+                    Voice
+                  </span>
+                  <select
+                    id="nationforge-tts-voice"
+                    value={ttsVoiceId}
+                    onChange={(e) =>
+                      setTtsVoiceId(normalizeXaiTtsVoiceId(e.target.value))
+                    }
+                    className="max-w-[9rem] rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                  >
+                    {XAI_TTS_VOICES.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 {ttsEnabled ? (
-                  <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                  <span className="w-full text-[10px] text-zinc-500 sm:w-auto dark:text-zinc-400">
                     New lines queue if speech is still playing.
                   </span>
                 ) : null}
