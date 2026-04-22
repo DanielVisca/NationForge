@@ -301,9 +301,21 @@ export default function NationForgeBoard() {
     };
   }, []);
 
-  const showWizard = Boolean(
-    urlToken && myNation && !myNation.forgeComplete && myNation.forgeProgress,
-  );
+  /** Nation row for the wizard; default forgeProgress if the API row was incomplete. */
+  const wizardNation = useMemo((): Nation | null => {
+    if (!myNation || myNation.forgeComplete) return null;
+    if (myNation.forgeProgress) return myNation;
+    return {
+      ...myNation,
+      forgeProgress: {
+        stepIndex: 0,
+        selections: { demographicsAddons: [] },
+        forgeWizardVersion: 2,
+      },
+    };
+  }, [myNation]);
+
+  const showWizard = Boolean(urlToken && wizardNation);
 
   const povNation = useMemo(
     () => session?.nations.find((n) => n.id === povNationId),
@@ -704,7 +716,7 @@ export default function NationForgeBoard() {
     return <div className="p-8 text-center text-sm text-zinc-500">Loading…</div>;
   }
 
-  if (showWizard && myNation?.forgeProgress) {
+  if (showWizard && wizardNation) {
     return (
       <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
         <div className="border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
@@ -724,7 +736,7 @@ export default function NationForgeBoard() {
         <NationForgeWizard
           sessionId={sessionId}
           token={urlToken!}
-          nation={myNation}
+          nation={wizardNation}
           onDone={load}
         />
       </div>

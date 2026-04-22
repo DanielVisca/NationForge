@@ -14,7 +14,8 @@ function hasAssistantReply(messages: UIMessage[]): boolean {
 
 export function normalizeNation(n: Nation): Nation {
   const domesticScratch = n.domesticScratch ?? "";
-  const forgeComplete = n.forgeComplete ?? true;
+  /** Only explicit `true` counts as forged; missing/false keeps the nation in the builder. */
+  const forgeComplete = n.forgeComplete === true;
   if (forgeComplete) {
     return { ...n, domesticScratch, forgeComplete: true, forgeProgress: null };
   }
