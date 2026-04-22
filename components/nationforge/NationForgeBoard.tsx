@@ -83,7 +83,7 @@ let openingBriefCooldownUntil = 0;
 
 const POLL_MS = 2500;
 const POLL_MS_GM_RUNNING = 650;
-/** Above this length, inline inflection prompt uses line-clamp + details. */
+/** Above this length, inflection prompt starts clamped with a show-more control. */
 const CRISIS_PROMPT_COLLAPSE_LEN = 220;
 
 async function readFetchErrorBody(res: Response): Promise<string> {
@@ -170,6 +170,8 @@ export default function NationForgeBoard() {
   /** Screen reader: announce each crisis id once (not on every poll). */
   const inflectionAnnouncedCrisisIdRef = useRef<string | null>(null);
   const [inflectionAriaNotice, setInflectionAriaNotice] = useState("");
+  const [inflectionPromptExpanded, setInflectionPromptExpanded] =
+    useState(false);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
   const [diplomacyToId, setDiplomacyToId] = useState("");
@@ -375,6 +377,10 @@ export default function NationForgeBoard() {
     const clip = p.length > 160 ? `${p.slice(0, 160)}…` : p;
     setInflectionAriaNotice(`New inflection. ${clip}`);
   }, [session?.crisis, inflectionActive]);
+
+  useEffect(() => {
+    setInflectionPromptExpanded(false);
+  }, [session?.crisis?.id]);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -987,19 +993,28 @@ export default function NationForgeBoard() {
                         </p>
                       ) : null}
                       {crisis.prompt.length > CRISIS_PROMPT_COLLAPSE_LEN ? (
-                        <>
-                          <p className="mt-2 line-clamp-3 text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                        <div className="mt-2">
+                          <p
+                            className={`whitespace-pre-wrap text-sm font-medium text-zinc-900 dark:text-zinc-50 ${
+                              inflectionPromptExpanded
+                                ? ""
+                                : "line-clamp-6 overflow-hidden"
+                            }`}
+                          >
                             {crisis.prompt}
                           </p>
-                          <details className="mt-2">
-                            <summary className="cursor-pointer text-xs text-blue-600 underline dark:text-blue-400">
-                              Read full inflection
-                            </summary>
-                            <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-800 dark:text-zinc-200">
-                              {crisis.prompt}
-                            </p>
-                          </details>
-                        </>
+                          <button
+                            type="button"
+                            className="mt-1.5 text-xs font-medium text-blue-700 underline decoration-blue-700/40 underline-offset-2 dark:text-blue-400"
+                            onClick={() =>
+                              setInflectionPromptExpanded((open) => !open)
+                            }
+                          >
+                            {inflectionPromptExpanded
+                              ? "Show less"
+                              : "Show full prompt"}
+                          </button>
+                        </div>
                       ) : (
                         <p className="mt-2 whitespace-pre-wrap text-sm font-medium text-zinc-900 dark:text-zinc-50">
                           {crisis.prompt}
