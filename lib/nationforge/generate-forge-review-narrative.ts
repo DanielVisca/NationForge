@@ -82,6 +82,7 @@ Write **one** Markdown document they read on the final "review" screen before lo
 - The JSON below is **authoritative**. Do **not** change spend, reserve, any stat number, or contradict listed picks. You may only narrate and dramatize what is already there.
 - Do **not** invent new mechanical bonuses beyond what synergy lines imply; those lines are story hooks tied to real in-game nudges.
 - Fictional setting only; inclusive; no slurs; do not vilify real-world peoples or countries by name.
+- Do **not** write a multi-decade timeline, "opening era", or **first-fifty-years** style campaign opening. The player has **not** locked this nation into play yet; the live GM delivers that official opening only **after** they finalize the forge and the table opens. This document is a pre-lock table read only.
 - Aim roughly **900–1800 words** unless the build is extremely minimal — lean into tensions, everyday life, who holds power, and how it *feels* to live there.
 
 ## Content to cover (use headings; rename or merge if it reads better)
@@ -89,7 +90,7 @@ Write **one** Markdown document they read on the final "review" screen before lo
 2. **Nation overview** — several paragraphs: geography-agnostic portrait of society, economy, labor, elites vs masses.
 3. **Your stats as fiction** — for each of the six stats, tie the **exact number** to how citizens and rivals experience this nation (one focused paragraph or two short ones per stat).
 4. **Synergies & contradictions** — weave synergy lines into drama; spotlight clashing picks (e.g. freedom vs control, growth vs ecology) even if synergy list is empty.
-5. **Opening era (~50 years)** — skim a timeline: founding tension, mid-era shift, late-era stress test; mention how reserve might cushion shocks if reserve > 0, or fragility if reserve is 0.
+5. **Fault lines going into play (no era timeline)** — where this build is likely to snag once the sim runs: institutions, legitimacy, external envy, internal factions. You may reference **reserve** as cushion vs fragility, but do **not** narrate decades of in-world history — that stays with the GM after lock-in.
 6. **Strengths** and **Pressure points** — tight bullet lists the player can use at the table.
 
 ## Authoritative facts (JSON)
