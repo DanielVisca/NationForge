@@ -63,7 +63,11 @@ export function validatePlayerTurn(
   }
 
   if (session.phase === "gm_running") {
-    return { ok: false, error: "GM is still resolving; wait for the stream to finish." };
+    return {
+      ok: false,
+      error:
+        "The GM is still writing this beat (streaming). Wait until it finishes — the page will update automatically.",
+    };
   }
 
   if (session.phase === "awaiting_decision" && session.crisis) {
@@ -79,7 +83,7 @@ export function validatePlayerTurn(
         return {
           ok: false,
           error:
-            "An opening or turn is already in the queue — wait for the GM to finish streaming.",
+            "A turn is already queued and the GM is working on it. Give it a few seconds — if nothing moves, refresh. (You do not need to send the opening twice.)",
         };
       }
     } else {

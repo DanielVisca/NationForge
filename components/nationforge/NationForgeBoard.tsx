@@ -22,7 +22,35 @@ const HOST_TOKENS_KEY = "nationforge-host-tokens";
 
 /** Dedupes auto-opening GM beat (avoids Strict Mode double-invoke sending twice). */
 let openingBeatAutoKeySent = "";
+/** Prevents parallel opening-brief POSTs from the same browser. */
+let openingBriefInFlight = false;
+
 const POLL_MS = 2500;
+const POLL_MS_GM_RUNNING = 650;
+
+async function readFetchErrorBody(res: Response): Promise<string> {
+  const t = await res.text();
+  try {
+    const j = JSON.parse(t) as { error?: string };
+    if (typeof j.error === "string" && j.error.trim()) return j.error.trim();
+  } catch {
+    /* ignore */
+  }
+  return t.trim() || res.statusText;
+}
+
+function isBenignGmBusyError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("already in the queue") ||
+    m.includes("opening or turn is already") ||
+    m.includes("still writing") ||
+    m.includes("still resolving") ||
+    m.includes("still streaming") ||
+    m.includes("wait for the gm") ||
+    m.includes("gm is still")
+  );
+}
 
 function textFromAssistantMessage(m: UIMessage): string {
   if (m.role !== "assistant") return "";
@@ -112,14 +140,17 @@ export default function NationForgeBoard() {
     });
   }, [load]);
 
+  const pollMs =
+    session?.phase === "gm_running" ? POLL_MS_GM_RUNNING : POLL_MS;
+
   useEffect(() => {
     const t = setInterval(() => {
       startTransition(() => {
         void load();
       });
-    }, POLL_MS);
+    }, pollMs);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, pollMs]);
 
   const crisis = session?.crisis ?? null;
 
@@ -172,6 +203,11 @@ export default function NationForgeBoard() {
       urlToken &&
       session.viewerNationId &&
       session.viewerNationId === session.activeNationId,
+  );
+
+  const gmComposing = Boolean(
+    session?.gameStarted &&
+      (session.phase === "gm_running" || busy || gmStreamText.length > 0),
   );
 
   const canSendTurn = useMemo(() => {
@@ -251,8 +287,13 @@ export default function NationForgeBoard() {
         );
       }
       if (!res.ok) {
-        const t = await res.text();
-        throw new Error(t || res.statusText);
+        const errText = await readFetchErrorBody(res);
+        if (isBenignGmBusyError(errText)) {
+          await load();
+          setGmStreamText("");
+          return;
+        }
+        throw new Error(errText);
       }
       await consumeGmTextStream(res, (d) => {
         setGmStreamText((x) => x + d);
@@ -264,6 +305,7 @@ export default function NationForgeBoard() {
       setSecretAction("");
       setReallocNotes("");
       await load();
+      setGmStreamText("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");
     } finally {
@@ -282,9 +324,12 @@ export default function NationForgeBoard() {
   ]);
 
   const submitOpeningBrief = useCallback(async () => {
-    if (!sessionId || !session) return;
+    if (!sessionId || !session?.crisis) return;
+    if (openingBriefInFlight) return;
     const opener = session.nations.find((n) => n.id === session.activeNationId);
     if (!opener?.forgeComplete) return;
+    const dedupeKey = `${session.id}:${session.crisis.id}`;
+    openingBriefInFlight = true;
     setBusy(true);
     setError(null);
     setGmStreamText("");
@@ -306,16 +351,25 @@ export default function NationForgeBoard() {
         );
       }
       if (!res.ok) {
-        const t = await res.text();
-        throw new Error(t || res.statusText);
+        const errText = await readFetchErrorBody(res);
+        if (isBenignGmBusyError(errText)) {
+          await load();
+          openingBeatAutoKeySent = dedupeKey;
+          setGmStreamText("");
+          return;
+        }
+        throw new Error(errText);
       }
       await consumeGmTextStream(res, (d) => {
         setGmStreamText((x) => x + d);
       });
       await load();
+      setGmStreamText("");
+      openingBeatAutoKeySent = dedupeKey;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");
     } finally {
+      openingBriefInFlight = false;
       setBusy(false);
     }
   }, [sessionId, session, load]);
@@ -331,7 +385,6 @@ export default function NationForgeBoard() {
     }
     const dedupeKey = `${session.id}:${session.crisis.id}`;
     if (openingBeatAutoKeySent === dedupeKey) return;
-    openingBeatAutoKeySent = dedupeKey;
     void (async () => {
       await Promise.resolve();
       await submitOpeningBrief();
@@ -408,6 +461,28 @@ export default function NationForgeBoard() {
         </details>
       </div>
 
+      {gmComposing ? (
+        <div className="w-full rounded-xl border border-sky-200 bg-gradient-to-r from-sky-50 to-white px-4 py-3 text-sm shadow-sm dark:border-sky-900/50 dark:from-sky-950/50 dark:to-zinc-950">
+          <p className="font-semibold text-sky-950 dark:text-sky-100">
+            Worldbuilding in progress
+          </p>
+          <p className="mt-1 text-xs text-sky-900/90 dark:text-sky-200/90">
+            Grok is drafting this beat.{" "}
+            {gmStreamText
+              ? "Live tokens show in the box below on this browser."
+              : session.phase === "gm_running"
+                ? "This page polls faster while the GM runs; the full reply appears when the beat completes."
+                : "Connecting to the GM stream…"}
+          </p>
+          {gmStreamText ? (
+            <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-sky-200/80 bg-white/90 p-3 font-mono text-xs leading-relaxed text-zinc-800 dark:border-sky-900/40 dark:bg-zinc-950 dark:text-zinc-200">
+              {gmStreamText}
+              <span className="ml-1 inline-block h-3 w-1 animate-pulse bg-sky-600 dark:bg-sky-400" />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {!urlToken ? (
         <section className="rounded-2xl border border-blue-200 bg-blue-50/80 px-5 py-5 dark:border-blue-900/50 dark:bg-blue-950/30">
           <h2 className="text-sm font-semibold text-blue-950 dark:text-blue-100">
@@ -471,9 +546,11 @@ export default function NationForgeBoard() {
           <div className="mt-4 ring-2 ring-amber-400/30 ring-offset-2 ring-offset-amber-50 dark:ring-amber-700/40 dark:ring-offset-zinc-950">
             <NationCard nation={myNation} />
           </div>
-          {busy ? (
+          {busy || session.phase === "gm_running" ? (
             <p className="mt-4 text-sm font-medium text-amber-950 dark:text-amber-100">
-              GM is drafting your opening scene…
+              {gmStreamText
+                ? "Streaming your opening scene — scroll the blue banner above for live text."
+                : "GM is drafting your opening scene…"}
             </p>
           ) : null}
           {error ? (
@@ -482,7 +559,8 @@ export default function NationForgeBoard() {
           {isOpeningBeatSeat && error ? (
             <button
               type="button"
-              className="mt-4 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-950 dark:border-amber-800 dark:bg-zinc-950 dark:text-amber-100"
+              disabled={busy || session.phase === "gm_running"}
+              className="mt-4 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-950 enabled:hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-800 dark:bg-zinc-950 dark:text-amber-100 dark:enabled:hover:bg-amber-950/40"
               onClick={() => {
                 openingBeatAutoKeySent = "";
                 void submitOpeningBrief();
@@ -511,16 +589,21 @@ export default function NationForgeBoard() {
         </section>
       ) : null}
 
-      {lastGmChapter || gmStreamText ? (
+      {lastGmChapter ||
+      gmStreamText ||
+      (session.gameStarted && session.phase === "gm_running") ? (
         <section className="rounded-2xl border border-zinc-200 bg-white px-5 py-5 dark:border-zinc-700 dark:bg-zinc-900">
           <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-            Last GM reply
+            {gmStreamText || session.phase === "gm_running"
+              ? "GM reply (live or latest)"
+              : "Last GM reply"}
           </p>
           {gmStreamText ? (
             <p className="mt-3 whitespace-pre-wrap text-base leading-relaxed text-zinc-900 dark:text-zinc-100">
               {gmStreamText}
+              <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-zinc-500 align-bottom dark:bg-zinc-400" />
             </p>
-          ) : (
+          ) : lastGmChapter ? (
             <>
               <p className="mt-3 line-clamp-6 whitespace-pre-wrap text-base leading-relaxed text-zinc-800 dark:text-zinc-200">
                 {lastGmChapter}
@@ -536,6 +619,19 @@ export default function NationForgeBoard() {
                 </details>
               ) : null}
             </>
+          ) : (
+            <div className="mt-4 space-y-2" aria-busy="true">
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                Composing this beat — streamed text shows here on the browser
+                that sent the turn; everyone else sees the paragraph when it
+                lands.
+              </p>
+              <div className="space-y-2 rounded-lg border border-zinc-100 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/80">
+                <div className="h-3 w-full animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
+                <div className="h-3 w-[92%] animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
+                <div className="h-3 w-[80%] animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
+              </div>
+            </div>
           )}
         </section>
       ) : (
