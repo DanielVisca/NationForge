@@ -3,10 +3,12 @@
 import type { UIMessage } from "ai";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { flushSync } from "react-dom";
 import {
   startTransition,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -114,18 +116,45 @@ export default function NationForgeBoard() {
   const router = useRouter();
   const sessionId = params.sessionId as string;
   const searchParams = useSearchParams();
-  const urlToken = searchParams.get("token");
+  const nextSearchToken = searchParams.get("token");
+  /** Next `useSearchParams` can lag `router.replace` and the address bar; fall back to `location.search`. */
+  const resolvedUrlToken = useMemo(() => {
+    if (nextSearchToken) return nextSearchToken;
+    if (typeof window === "undefined") return null;
+    const fromBar = new URLSearchParams(window.location.search).get("token");
+    return fromBar && fromBar.trim().length > 0 ? fromBar : null;
+  }, [nextSearchToken, sessionId]);
   /** `router.replace(?token=)` can lag behind `useSearchParams` in the same tab; hold token until URL catches up. */
   const [seatTokenBridge, setSeatTokenBridge] = useState<string | null>(null);
-  const seatToken = urlToken ?? seatTokenBridge;
+  const seatToken = resolvedUrlToken ?? seatTokenBridge;
 
   useEffect(() => {
-    if (urlToken) setSeatTokenBridge(null);
-  }, [urlToken]);
+    if (resolvedUrlToken) setSeatTokenBridge(null);
+  }, [resolvedUrlToken]);
 
-  useEffect(() => {
-    setSeatTokenBridge(null);
-  }, [sessionId]);
+  const prevSessionIdRef = useRef<string | null>(null);
+  const autoRestoreReplaceRef = useRef(false);
+  useLayoutEffect(() => {
+    const prev = prevSessionIdRef.current;
+    if (prev !== null && prev !== sessionId) {
+      autoRestoreReplaceRef.current = false;
+      flushSync(() => setSeatTokenBridge(null));
+    }
+    prevSessionIdRef.current = sessionId;
+
+    if (resolvedUrlToken) return;
+
+    const seat = readLastNationForgeSeat(sessionId);
+    if (!seat?.token) return;
+
+    flushSync(() => setSeatTokenBridge(seat.token));
+    if (!autoRestoreReplaceRef.current) {
+      autoRestoreReplaceRef.current = true;
+      router.replace(
+        `/nationforge/${sessionId}?token=${encodeURIComponent(seat.token)}`,
+      );
+    }
+  }, [sessionId, resolvedUrlToken, router]);
 
   const [session, setSession] = useState<PublicGameSession | null>(null);
   const [hostTokens] = useState<Record<string, string> | null>(() =>
@@ -178,7 +207,7 @@ export default function NationForgeBoard() {
     if (token.trim() && data.viewerNationId == null) {
       clearNationForgeSeat(sessionId);
       setSeatTokenBridge(null);
-      if (urlToken) {
+      if (resolvedUrlToken) {
         router.replace(`/nationforge/${sessionId}`);
       }
     }
@@ -194,29 +223,13 @@ export default function NationForgeBoard() {
       if (data.nations[0]) return data.activeNationId ?? data.nations[0]!.id;
       return prev;
     });
-  }, [sessionId, seatToken, urlToken, router]);
+  }, [sessionId, seatToken, resolvedUrlToken, router]);
 
   useEffect(() => {
     startTransition(() => {
       void load();
     });
   }, [load]);
-
-  const autoRestoreAttemptedRef = useRef(false);
-  useEffect(() => {
-    autoRestoreAttemptedRef.current = false;
-  }, [sessionId]);
-
-  useEffect(() => {
-    if (urlToken) return;
-    if (autoRestoreAttemptedRef.current) return;
-    const seat = readLastNationForgeSeat(sessionId);
-    if (!seat?.token) return;
-    autoRestoreAttemptedRef.current = true;
-    router.replace(
-      `/nationforge/${sessionId}?token=${encodeURIComponent(seat.token)}`,
-    );
-  }, [sessionId, urlToken, router]);
 
   const pollMs =
     session?.phase === "gm_running" ? POLL_MS_GM_RUNNING : POLL_MS;
