@@ -865,6 +865,17 @@ export default function NationForgeBoard() {
                   Focus: {crisisInvolvedNames.join(", ")}
                 </p>
               ) : null}
+              <p className="mt-3 rounded-lg border border-violet-200/70 bg-violet-50/80 px-3 py-2.5 text-xs leading-relaxed text-violet-950 dark:border-violet-800/60 dark:bg-violet-950/40 dark:text-violet-100/95">
+                <span className="font-semibold">You declare what your nation tries;</span> the GM
+                (AI) narrates consequences in the next chronicle beat — it does
+                not silently pick a/b/c/d for you. Choose a listed path or write
+                your own under Something else, then flesh it out in{" "}
+                <span className="font-semibold">Storyline</span> below and press{" "}
+                <span className="font-semibold">Send to GM</span>. There is no
+                separate submit here;{" "}
+                <span className="whitespace-nowrap">Enter</span> in text areas
+                only starts a new line.
+              </p>
               <p className="mt-4 whitespace-pre-wrap text-lg font-medium leading-relaxed text-zinc-900 dark:text-zinc-50">
                 {crisis.prompt}
               </p>
@@ -911,11 +922,9 @@ export default function NationForgeBoard() {
                 />
               </div>
               <p className="mt-4 text-xs text-violet-800/90 dark:text-violet-200/85">
-                Tie this to your storyline in{" "}
-                <strong className="font-semibold">Write your beat</strong> below,
-                then send to the GM. The world may also react with emergent events
-                you did not directly cause — new threats, opportunities, or
-                surprises — by design, so Aetheria stays alive.
+                Make the radio choice match what you say in Storyline so the GM
+                can honor both. The world may still throw emergent shocks you did
+                not order — by design.
               </p>
             </section>
           ) : null}
