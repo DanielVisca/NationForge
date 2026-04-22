@@ -1,4 +1,4 @@
-import type { GameSession, Nation } from "./schema";
+import type { EmergentEventRecord, GameSession, Nation } from "./schema";
 
 export type PublicSecret = {
   id: string;
@@ -15,12 +15,16 @@ export type NationRosterEntry = {
   forgeComplete: boolean;
 };
 
+/** Emergent beats visible at the table; GM-only privateNotes stripped. */
+export type PublicEmergentEvent = Omit<EmergentEventRecord, "privateNotes">;
+
 export type PublicGameSession = Omit<
   GameSession,
-  "secrets" | "seatTokens" | "nations"
+  "secrets" | "seatTokens" | "nations" | "emergentEvents"
 > & {
   nations: Nation[];
   nationRoster: NationRosterEntry[];
   secrets: PublicSecret[];
+  emergentEvents: PublicEmergentEvent[];
   viewerNationId: string | null;
 };

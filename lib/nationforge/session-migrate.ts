@@ -68,5 +68,9 @@ export function migrateSession(session: GameSession): GameSession {
     ? s.diplomaticOutreach
     : [];
 
-  return { ...s, nations, diplomaticOutreach };
+  const emergentEvents = Array.isArray(s.emergentEvents)
+    ? s.emergentEvents
+    : [];
+
+  return { ...s, nations, diplomaticOutreach, emergentEvents };
 }

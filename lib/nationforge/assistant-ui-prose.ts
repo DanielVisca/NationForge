@@ -39,7 +39,8 @@ function toolPartIndicatesCompletedGmBeat(p: unknown): boolean {
   return (
     t === "tool-append_turn_log" ||
     t === "tool-apply_stat_deltas" ||
-    t === "tool-no_stat_change_this_turn"
+    t === "tool-no_stat_change_this_turn" ||
+    t === "tool-declare_emergent_event"
   );
 }
 

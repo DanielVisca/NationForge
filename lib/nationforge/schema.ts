@@ -106,6 +106,27 @@ export type GameSecret = {
   revealed: boolean;
 };
 
+export type EmergentSeverity =
+  | "minor"
+  | "moderate"
+  | "major"
+  | "world-shaking";
+
+/** GM-logged emergent world beats (server truth; privateNotes stripped for clients). */
+export type EmergentEventRecord = {
+  id: string;
+  at: string;
+  eventTitle: string;
+  description: string;
+  affectedNationIds: string[];
+  severity?: EmergentSeverity;
+  /** GM-only; never sent to player clients. */
+  privateNotes?: string;
+};
+
+/** Cap for emergentEvents on disk / in prompts. */
+export const MAX_EMERGENT_EVENTS_STORED = 50;
+
 export type GameSession = {
   id: string;
   /** Short code for LAN join */
@@ -129,6 +150,8 @@ export type GameSession = {
   lastGmResponseId?: string;
   /** Bilateral messages; each party sees only threads they are part of (client filter). */
   diplomaticOutreach: DiplomaticOutreach[];
+  /** GM tool append-only log; hydrate to [] in session-migrate for legacy saves. */
+  emergentEvents: EmergentEventRecord[];
 };
 
 export const MAX_REALLOC_POINTS_PER_TURN = 10;

@@ -4,8 +4,8 @@ import { randomUUID } from "node:crypto";
 import { tool } from "ai";
 import { z } from "zod";
 
-import type { Crisis, Nation, TurnLogEntry } from "./schema";
-import { STAT_KEYS } from "./schema";
+import type { Crisis, EmergentEventRecord, Nation, TurnLogEntry } from "./schema";
+import { MAX_EMERGENT_EVENTS_STORED, STAT_KEYS } from "./schema";
 import {
   applyDeltasToStats,
   type StatDeltas,
@@ -125,7 +125,8 @@ export function createNationForgeTools(sessionId: string) {
   });
 
   const set_inflection = tool({
-    description: "Set the next crisis / inflection point players will react to.",
+    description:
+      "Set the single next table crisis / inflection (one call per resolution). Prefer 4–6 options with stable string ids, allowCustom true, and at least one option that invites open-ended player action (e.g. wording like “Something else — describe any action you want”).",
     inputSchema: z.object({
       prompt: z.string(),
       options: z
@@ -161,6 +162,69 @@ export function createNationForgeTools(sessionId: string) {
     },
   });
 
+  const severitySchema = z.enum(["minor", "moderate", "major", "world-shaking"]);
+
+  const declare_emergent_event = tool({
+    description:
+      "Introduce a random or semi-random emergent world event (new faction, disaster, discovery, coup, etc.). Only when it feels organic — not every turn. Does not change stats; use apply_stat_deltas if numbers move. Logged for future GM context.",
+    inputSchema: z.object({
+      eventTitle: z.string().describe("Short headline for logs and UI"),
+      description: z.string().describe("What happened in the fiction"),
+      affectedNationIds: z
+        .array(z.string())
+        .min(1)
+        .describe("Player nation ids touched by this beat; unknown ids are dropped"),
+      severity: severitySchema
+        .optional()
+        .describe("Scale of the shock"),
+      privateNotes: z
+        .string()
+        .optional()
+        .describe("GM-only reasoning or hidden effects — never shown to players"),
+    }),
+    execute: async ({
+      eventTitle,
+      description,
+      affectedNationIds,
+      severity,
+      privateNotes,
+    }) => {
+      const session = await getGameSession(sessionId);
+      if (!session) return { ok: false as const, error: "Session not found" };
+
+      const validIds = new Set(session.nations.map((n) => n.id));
+      const dropped = affectedNationIds.filter((id) => !validIds.has(id));
+      const filtered = affectedNationIds.filter((id) => validIds.has(id));
+      if (filtered.length === 0) {
+        return {
+          ok: false as const,
+          error:
+            "No valid nation ids in affectedNationIds after filtering — check ids match table seats.",
+          droppedUnknownNationIds: dropped,
+        };
+      }
+
+      const record: EmergentEventRecord = {
+        id: randomUUID(),
+        at: new Date().toISOString(),
+        eventTitle,
+        description,
+        affectedNationIds: filtered,
+        severity,
+        privateNotes: privateNotes?.trim() || undefined,
+      };
+      const emergentEvents = [...session.emergentEvents, record].slice(
+        -MAX_EMERGENT_EVENTS_STORED,
+      );
+      await saveGameSession({ ...session, emergentEvents });
+      return {
+        ok: true as const,
+        id: record.id,
+        droppedUnknownNationIds: dropped.length ? dropped : undefined,
+      };
+    },
+  });
+
   const register_secret = tool({
     description: "Register a secret action for a nation (hidden from other nations until revealed).",
     inputSchema: z.object({
@@ -192,6 +256,7 @@ export function createNationForgeTools(sessionId: string) {
     no_stat_change_this_turn,
     append_turn_log,
     set_inflection,
+    declare_emergent_event,
     register_secret,
   };
 }

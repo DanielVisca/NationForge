@@ -84,7 +84,7 @@ export async function POST(req: Request) {
   const userMessage: UIMessage = {
     id: generateId(),
     role: "user",
-    parts: [{ type: "text", text: formatPlayerTurnMessage(body) }],
+    parts: [{ type: "text", text: formatPlayerTurnMessage(body, session) }],
   };
 
   const allMessages: UIMessage[] = [...session.gmMessages, userMessage];

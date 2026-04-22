@@ -61,7 +61,7 @@ export function recoverStaleGmRunningPhase(session: GameSession): GameSession {
   };
 }
 
-/** True once any assistant message has chronicle text or a completed GM tool call. */
+/** True once any assistant message has GM-visible prose or a completed GM tool call. */
 export function sessionHasGmStory(session: GameSession): boolean {
   return gmThreadHasAssistantDelivery(session.gmMessages);
 }
@@ -80,7 +80,7 @@ export function validatePlayerTurn(
       error:
         session.nations.length === 0
           ? "No forged nations in this room yet."
-          : "Every nation still in the builder must finish the 100-point forge before the GM opens the chronicle.",
+          : "Every nation still in the builder must finish the 100-point forge before the GM opens the table.",
     };
   }
 
@@ -111,7 +111,7 @@ export function validatePlayerTurn(
         return {
           ok: false,
           error:
-            "The opening beat already ran — use the storyline field and pick a crisis response below.",
+            "The opening beat already ran — send your move in the chat field (and optional crisis fields if your client sends them).",
         };
       }
       if (session.gmMessages.some((m) => m.role === "user")) {
@@ -122,12 +122,7 @@ export function validatePlayerTurn(
         };
       }
     } else {
-      if (!p.crisisChoiceId && !p.customCrisisResponse?.trim()) {
-        return {
-          ok: false,
-          error: "Choose a crisis option id or provide a custom response (Something else).",
-        };
-      }
+      /** Prose-only crisis answers: narrative alone is enough (optional explicit pick below). */
       if (p.crisisChoiceId) {
         const ok = session.crisis.options.some((o) => o.id === p.crisisChoiceId);
         if (!ok) {
@@ -146,7 +141,12 @@ export function validatePlayerTurn(
   return { ok: true };
 }
 
-export function formatPlayerTurnMessage(p: PlayerTurnPayload): string {
+const CRISIS_CONTEXT_CLIP = 400;
+
+export function formatPlayerTurnMessage(
+  p: PlayerTurnPayload,
+  session?: Pick<GameSession, "phase" | "crisis"> | null,
+): string {
   const lines: string[] = [`POV: ${p.povNationId}`, "", p.narrative.trim()];
   if (p.orientationRequest) {
     lines.push("", "(orientationRequest: first opening beat — crisis choice deferred)");
@@ -156,6 +156,26 @@ export function formatPlayerTurnMessage(p: PlayerTurnPayload): string {
   }
   if (p.customCrisisResponse?.trim()) {
     lines.push("", `Custom crisis response: ${p.customCrisisResponse.trim()}`);
+  }
+  const hasExplicitCrisis =
+    Boolean(p.crisisChoiceId?.trim()) || Boolean(p.customCrisisResponse?.trim());
+  if (
+    session?.phase === "awaiting_decision" &&
+    session.crisis &&
+    !p.orientationRequest &&
+    !hasExplicitCrisis
+  ) {
+    const c = session.crisis;
+    const prompt = c.prompt.trim();
+    const promptClip =
+      prompt.length > CRISIS_CONTEXT_CLIP
+        ? `${prompt.slice(0, CRISIS_CONTEXT_CLIP)}…`
+        : prompt;
+    lines.push(
+      "",
+      `Active crisis (player answered in prose above): crisisId=${c.id}`,
+      `Crisis prompt (context for GM): ${promptClip}`,
+    );
   }
   if (p.publicDiplomacy?.trim()) {
     lines.push("", `Public diplomacy: ${p.publicDiplomacy.trim()}`);

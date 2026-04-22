@@ -1,6 +1,24 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Aetheria
 
-## Getting Started
+Aetheria is a Next.js app that hosts **Grok**-powered chat and **NationForge**, a living political grand-strategy sandbox at the table.
+
+## NationForge — game vision
+
+NationForge is an **open-ended** political grand-strategy sandbox set in Aetheria. Players control nations and can take them in any direction. The Game Master (Grok) resolves player actions fairly, then introduces **emergent** events — including occasional random or semi-random consequences that no player (or the GM in advance) fully dictates.
+
+Examples of emergence:
+
+- A surprise new nation or faction suddenly appears on the map.
+- A non-player nation declares war, collapses, or offers an unexpected alliance.
+- Natural disasters, pandemics, technological singularities, cultural movements, or economic shocks arise organically.
+- Hidden player secrets are discovered at unpredictable moments.
+- Butterfly-effect consequences from earlier choices snowball in surprising ways.
+
+The GM uses **controlled randomness** (via internal reasoning or tools such as `declare_emergent_event`) to keep the world alive and unpredictable, but **never** railroads toward a preset story.
+
+---
+
+## Getting Started (Next.js)
 
 First, run the development server:
 
@@ -16,7 +34,7 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you save.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
@@ -31,6 +49,6 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 ## Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The easiest way to deploy this Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

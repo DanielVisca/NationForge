@@ -6,7 +6,11 @@ import path from "node:path";
 import type { UIMessage } from "ai";
 
 import type { GameSession, Nation, NationStats } from "./schema";
-import type { PublicGameSession, PublicSecret } from "./public-types";
+import type {
+  PublicEmergentEvent,
+  PublicGameSession,
+  PublicSecret,
+} from "./public-types";
 import { STAT_KEYS } from "./schema";
 import { migrateSession } from "./session-migrate";
 
@@ -71,6 +75,7 @@ export async function createGameSession(): Promise<GameSession> {
     seatTokens: {},
     gmMessages: [],
     diplomaticOutreach: [],
+    emergentEvents: [],
   };
   store.sessions[id] = session;
   store.roomIndex[roomCode] = id;
@@ -177,8 +182,9 @@ export async function updateGameSession(
   mutator: (s: GameSession) => void,
 ): Promise<GameSession | undefined> {
   const store = await readStore();
-  const s = store.sessions[id];
-  if (!s) return undefined;
+  const raw = store.sessions[id];
+  if (!raw) return undefined;
+  const s = migrateSession(raw);
   mutator(s);
   s.updatedAt = new Date().toISOString();
   store.sessions[id] = s;
@@ -258,23 +264,33 @@ export function filterSessionForClient(
       (o.fromNationId === effectiveViewer || o.toNationId === effectiveViewer),
   );
 
+  const emergentEvents: PublicEmergentEvent[] = s.emergentEvents.map(
+    ({ privateNotes: _omit, ...pub }) => {
+      void _omit;
+      return pub;
+    },
+  );
+
   const {
     seatTokens,
     secrets: _sessionSecrets,
     nations: _n,
     diplomaticOutreach: _allOutreach,
+    emergentEvents: _emergentRaw,
     ...rest
   } = s;
   void seatTokens;
   void _sessionSecrets;
   void _n;
   void _allOutreach;
+  void _emergentRaw;
   return {
     ...rest,
     nations,
     nationRoster,
     secrets,
     diplomaticOutreach,
+    emergentEvents,
     viewerNationId: effectiveViewer,
   };
 }
