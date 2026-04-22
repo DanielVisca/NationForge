@@ -875,10 +875,11 @@ export default function NationForgeBoard() {
             {myNation.name}
           </h2>
           <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-            The table is opening with a GM-written orientation to your forged
-            nation — your stats and build below are what the sim locked in. The
-            Year-1 crisis shows up right after this beat so you can answer it in
-            plain language.
+            The table is opening with a GM-written **First 50 Years** history,
+            strengths and weaknesses, then the **first decisive event** (any year
+            or flavor the GM chooses). Your stats and build below are what the
+            sim locked in. You answer that first event in open prose once it
+            appears in chat.
           </p>
           <div className="mt-4 ring-2 ring-amber-400/30 ring-offset-2 ring-offset-amber-50 dark:ring-amber-700/40 dark:ring-offset-zinc-950">
             <NationCard nation={myNation} isViewer />

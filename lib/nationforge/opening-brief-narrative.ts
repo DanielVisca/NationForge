@@ -5,7 +5,7 @@ import { STAT_KEYS } from "./schema";
 export function buildOpeningBriefPlayerMessage(nation: Nation): string {
   const statLines = STAT_KEYS.map((k) => `${k}: ${nation.stats[k]}`).join("\n");
   return [
-    "[NationForge — opening beat before the first crisis choice]",
+    "[NationForge — opening beat: first fifty years, then first event]",
     "",
     `POV nation: ${nation.name}`,
     `Reserve: ${nation.reserve}`,
@@ -16,10 +16,15 @@ export function buildOpeningBriefPlayerMessage(nation: Nation): string {
     "Forge build notes (authoritative texture for your prose):",
     nation.buildNotes,
     "",
-    "What I want from you, GM:",
-    "- Give me a rich, table-ready orientation to **this** polity: streets, factions, mood, and at least one tension implied by the build above.",
-    "- Aim for roughly 5–9 paragraphs; Markdown with ## headings is fine if it reads better aloud.",
-    "- Do **not** choose my crisis outcome; close by restating the table's Year-1 crisis in one or two neutral sentences so we can answer it on the next beat.",
-    "- Prefer **no_stat_change_this_turn** unless a tiny atmospheric nudge is clearly justified.",
+    "What I want from you, GM — structure this opening dispatch clearly:",
+    "",
+    "1) **First 50 Years – A Brief History** — chronological or thematic sweep from founding through Year 50: how power, economy, culture, and borders evolved from the forge choices above.",
+    "2) **Strengths and weaknesses at Year 50** — concrete snapshot: what this nation does well, what strains it, what could snap under pressure.",
+    "3) **First event** — introduce one decisive situation (any in-world year you choose; not locked to Year 1). It can be political, military, social, environmental, a movement, a standout figure, diplomacy, or anything that fits — your pick. You may suggest angles in your prose, but the table will answer in **open-ended prose** (no forced multiple choice).",
+    "4) **Do not resolve that first event** in this beat — leave the choice to us on the next message.",
+    "5) Call **set_inflection** once at the end so the session crisis prompt matches the first event you described (vivid prompt; internal options for your bookkeeping). Replace the placeholder crisis entirely.",
+    "6) Prefer **no_stat_change_this_turn** unless a tiny atmospheric nudge is clearly justified.",
+    "",
+    "Aim for depth and generativity; Markdown with ## headings is fine.",
   ].join("\n");
 }

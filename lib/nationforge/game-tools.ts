@@ -126,7 +126,7 @@ export function createNationForgeTools(sessionId: string) {
 
   const set_inflection = tool({
     description:
-      "Set the single next table crisis / inflection (one call per resolution). Prefer 4–6 options with stable string ids, allowCustom true, and at least one option that invites open-ended player action (e.g. wording like “Something else — describe any action you want”).",
+      "Set the single next table crisis / inflection (one call per resolution). Use a vivid prompt players read in the UI; pick any in-world timing or situation you want. Prefer 4–6 internal options with stable string ids and allowCustom true for bookkeeping — players answer in open prose and are not shown option labels.",
     inputSchema: z.object({
       prompt: z.string(),
       options: z

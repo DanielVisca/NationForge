@@ -29,18 +29,16 @@ function starterCrisisForNations(nationIds: string[]): Crisis {
   const n = nationIds.length;
   const prompt =
     n <= 1
-      ? "Year 1 — your power defines the frontier. Choose how the era opens."
+      ? "Placeholder — the GM is delivering your first fifty years and the first decisive moment. After their opening finishes, answer in open prose."
       : n === 2
-        ? "Year 1 — both powers scan the frontier. Choose how your nation opens the era."
-        : `Year 1 — ${n} powers scan the frontier. Choose how your nation opens the era.`;
+        ? "Placeholder — the GM is introducing both forged powers, fifty years of history each (as fits), then the first shared or parallel decisive moment. Answer in open prose once the opening lands."
+        : `Placeholder — the GM is opening the table for ${n} forged seats (fifty-year histories where relevant), then the first decisive moment. Answer in open prose once the opening lands.`;
   return {
     id: randomUUID(),
     prompt,
     options: [
-      { id: "a", label: "Signal peaceful intent; invest in trade envoys" },
-      { id: "b", label: "Fortify borders; prioritize internal security" },
-      { id: "c", label: "Secretly accelerate a high-risk research program" },
-      { id: "d", label: "Demand joint inspection of shared infrastructure" },
+      { id: "a", label: "Internal reference — player answers in prose" },
+      { id: "b", label: "Internal reference — player answers in prose" },
     ],
     allowCustom: true,
     activeNationIds: [...nationIds],
