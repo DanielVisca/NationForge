@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-const STORAGE_KEY = "nationforge-host-tokens";
+import { NATIONFORGE_HOST_TOKENS_KEY } from "@/lib/nationforge/seat-token-cache";
+
+const STORAGE_KEY = NATIONFORGE_HOST_TOKENS_KEY;
 
 export default function NewNationForgeSessionPage() {
   const router = useRouter();

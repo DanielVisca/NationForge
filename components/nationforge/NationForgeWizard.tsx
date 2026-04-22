@@ -17,6 +17,7 @@ import {
   type NationForgeSelections,
 } from "@/lib/nationforge/nation-forge-catalog";
 import { computeSynergies, resolveForgeToNation } from "@/lib/nationforge/nation-forge-resolve";
+import { rememberNationForgeSeat } from "@/lib/nationforge/seat-token-cache";
 import type { Nation } from "@/lib/nationforge/schema";
 
 const STEP_HEADLINE: Record<ForgeStepId, string> = {
@@ -137,6 +138,7 @@ export default function NationForgeWizard({
         if (!res.ok) throw new Error(j.error ?? res.statusText);
         await onDone();
         if (body.type === "finalize") {
+          rememberNationForgeSeat(sessionId, nation.id, token);
           router.replace(`/nationforge/${sessionId}?token=${encodeURIComponent(token)}`);
         }
       } catch (e) {
@@ -145,7 +147,7 @@ export default function NationForgeWizard({
         setBusy(false);
       }
     },
-    [sessionId, token, onDone, router],
+    [sessionId, token, nation.id, onDone, router],
   );
 
   if (!progress || !stepId) {

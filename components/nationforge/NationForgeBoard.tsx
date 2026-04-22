@@ -23,6 +23,12 @@ import { buildOpeningBriefPlayerMessage } from "@/lib/nationforge/opening-brief-
 import { playerTurnChatDisplayBody } from "@/lib/nationforge/player-input";
 import type { PublicGameSession } from "@/lib/nationforge/public-types";
 import {
+  clearNationForgeSeat,
+  readHostTokensForSession,
+  readLastNationForgeSeat,
+  rememberNationForgeSeat,
+} from "@/lib/nationforge/seat-token-cache";
+import {
   MAX_DIPLOMACY_MESSAGE_LENGTH,
   MAX_DIPLOMACY_REPLY_LENGTH,
   MAX_DOMESTIC_SCRATCH_LENGTH,
@@ -67,8 +73,6 @@ function userMessageTextParts(m: UIMessage): string {
   );
 }
 
-const HOST_TOKENS_KEY = "nationforge-host-tokens";
-
 /** Dedupes auto-opening GM beat (avoids Strict Mode double-invoke sending twice). */
 let openingBeatAutoKeySent = "";
 /** Prevents parallel opening-brief POSTs from the same browser. */
@@ -105,21 +109,6 @@ function isBenignGmBusyError(message: string): boolean {
   );
 }
 
-function mergeSeatToken(sessionId: string, nationId: string, token: string) {
-  if (typeof globalThis.window === "undefined") return;
-  try {
-    const raw = globalThis.localStorage.getItem(HOST_TOKENS_KEY);
-    const all = (raw ? JSON.parse(raw) : {}) as Record<
-      string,
-      Record<string, string>
-    >;
-    all[sessionId] = { ...(all[sessionId] ?? {}), [nationId]: token };
-    globalThis.localStorage.setItem(HOST_TOKENS_KEY, JSON.stringify(all));
-  } catch {
-    /* ignore */
-  }
-}
-
 export default function NationForgeBoard() {
   const params = useParams();
   const router = useRouter();
@@ -139,17 +128,9 @@ export default function NationForgeBoard() {
   }, [sessionId]);
 
   const [session, setSession] = useState<PublicGameSession | null>(null);
-  const [hostTokens] = useState<Record<string, string> | null>(() => {
-    if (typeof globalThis.window === "undefined") return null;
-    try {
-      const raw = globalThis.localStorage.getItem(HOST_TOKENS_KEY);
-      if (!raw) return null;
-      const all = JSON.parse(raw) as Record<string, Record<string, string>>;
-      return all[sessionId] ?? null;
-    } catch {
-      return null;
-    }
-  });
+  const [hostTokens] = useState<Record<string, string> | null>(() =>
+    readHostTokensForSession(sessionId),
+  );
   const [gmStreamText, setGmStreamText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -186,8 +167,21 @@ export default function NationForgeBoard() {
     const res = await fetch(
       `/api/nationforge/sessions/${sessionId}${token ? `?token=${encodeURIComponent(token)}` : ""}`,
     );
+    if (res.status === 404) {
+      clearNationForgeSeat(sessionId);
+      setSeatTokenBridge(null);
+      setSession(null);
+      return;
+    }
     if (!res.ok) return;
     const data = (await res.json()) as PublicGameSession;
+    if (token.trim() && data.viewerNationId == null) {
+      clearNationForgeSeat(sessionId);
+      setSeatTokenBridge(null);
+      if (urlToken) {
+        router.replace(`/nationforge/${sessionId}`);
+      }
+    }
     setSession((prev) => {
       if (prev && prev.id === data.id && prev.updatedAt === data.updatedAt) {
         return prev;
@@ -200,13 +194,29 @@ export default function NationForgeBoard() {
       if (data.nations[0]) return data.activeNationId ?? data.nations[0]!.id;
       return prev;
     });
-  }, [sessionId, seatToken]);
+  }, [sessionId, seatToken, urlToken, router]);
 
   useEffect(() => {
     startTransition(() => {
       void load();
     });
   }, [load]);
+
+  const autoRestoreAttemptedRef = useRef(false);
+  useEffect(() => {
+    autoRestoreAttemptedRef.current = false;
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (urlToken) return;
+    if (autoRestoreAttemptedRef.current) return;
+    const seat = readLastNationForgeSeat(sessionId);
+    if (!seat?.token) return;
+    autoRestoreAttemptedRef.current = true;
+    router.replace(
+      `/nationforge/${sessionId}?token=${encodeURIComponent(seat.token)}`,
+    );
+  }, [sessionId, urlToken, router]);
 
   const pollMs =
     session?.phase === "gm_running" ? POLL_MS_GM_RUNNING : POLL_MS;
@@ -430,7 +440,7 @@ export default function NationForgeBoard() {
         nationId: string;
         token: string;
       };
-      mergeSeatToken(data.sessionId, data.nationId, data.token);
+      rememberNationForgeSeat(data.sessionId, data.nationId, data.token);
       setSeatTokenBridge(data.token);
       router.replace(
         `/nationforge/${data.sessionId}?token=${encodeURIComponent(data.token)}`,

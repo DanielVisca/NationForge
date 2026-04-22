@@ -3,22 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 
-const HOST_TOKENS_KEY = "nationforge-host-tokens";
-
-function mergeSeatToken(sessionId: string, nationId: string, token: string) {
-  if (typeof globalThis.window === "undefined") return;
-  try {
-    const raw = globalThis.localStorage.getItem(HOST_TOKENS_KEY);
-    const all = (raw ? JSON.parse(raw) : {}) as Record<
-      string,
-      Record<string, string>
-    >;
-    all[sessionId] = { ...(all[sessionId] ?? {}), [nationId]: token };
-    globalThis.localStorage.setItem(HOST_TOKENS_KEY, JSON.stringify(all));
-  } catch {
-    /* ignore */
-  }
-}
+import { rememberNationForgeSeat } from "@/lib/nationforge/seat-token-cache";
 
 export default function JoinNationForgeInner() {
   const router = useRouter();
@@ -49,7 +34,7 @@ export default function JoinNationForgeInner() {
         nationId: string;
         token: string;
       };
-      mergeSeatToken(data.sessionId, data.nationId, data.token);
+      rememberNationForgeSeat(data.sessionId, data.nationId, data.token);
       router.push(
         `/nationforge/${data.sessionId}?token=${encodeURIComponent(data.token)}`,
       );
