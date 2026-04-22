@@ -1345,36 +1345,33 @@ export default function NationForgeBoard() {
         </details>
       ) : null}
 
-      {(session.nationRoster?.length ?? session.nations.length) > 0 ? (
+      {session.nationRoster.length > 0 ? (
         <details className="rounded-xl border border-zinc-200 dark:border-zinc-700">
           <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
             Table roster
             <span className="ml-2 font-normal text-zinc-400">
-              (
-              {session.nationRoster?.length ?? session.nations.length}{" "}
-              {session.nationRoster?.length === 1 ? "seat" : "seats"})
+              ({session.nationRoster.length}{" "}
+              {session.nationRoster.length === 1 ? "seat" : "seats"})
             </span>
           </summary>
           <ul className="space-y-2 border-t border-zinc-100 p-4 text-sm dark:border-zinc-800">
-            {(session.nationRoster ?? session.nations.map((n) => ({ id: n.id, name: n.name, forgeComplete: n.forgeComplete }))).map(
-              (row) => (
-                <li
-                  key={row.id}
-                  className="flex flex-wrap items-center justify-between gap-2 text-zinc-800 dark:text-zinc-200"
-                >
-                  <span className="font-medium">{row.name}</span>
-                  {!row.forgeComplete ? (
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                      Forging
-                    </span>
-                  ) : (
-                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                      At table
-                    </span>
-                  )}
-                </li>
-              ),
-            )}
+            {session.nationRoster.map((row) => (
+              <li
+                key={row.id}
+                className="flex flex-wrap items-center justify-between gap-2 text-zinc-800 dark:text-zinc-200"
+              >
+                <span className="font-medium">{row.name}</span>
+                {!row.forgeComplete ? (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                    Forging
+                  </span>
+                ) : (
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    At table
+                  </span>
+                )}
+              </li>
+            ))}
           </ul>
         </details>
       ) : null}
