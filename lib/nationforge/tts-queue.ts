@@ -88,6 +88,7 @@ export function createNationForgeTtsQueue(
       }
     } finally {
       draining = false;
+      if (pending.length > 0 && !disposed) void drain();
     }
   };
 

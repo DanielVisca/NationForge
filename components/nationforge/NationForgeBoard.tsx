@@ -531,7 +531,8 @@ export default function NationForgeBoard() {
       if (ttsSeenKeysRef.current.has(key)) return;
       ttsSeenKeysRef.current.add(key);
       const plain = markdownishToSpeechText(prose);
-      for (const chunk of chunkTextForTts(plain)) {
+      const gmChunks = chunkTextForTts(plain);
+      for (const chunk of gmChunks) {
         q.enqueue(chunk);
       }
     });
@@ -539,12 +540,23 @@ export default function NationForgeBoard() {
     if (inflectionActive && session.crisis) {
       const k = `inflection:${session.crisis.id}:${session.crisis.prompt}`;
       if (!ttsSeenKeysRef.current.has(k)) {
-        ttsSeenKeysRef.current.add(k);
-        const plain = markdownishToSpeechText(session.crisis.prompt);
-        if (plain) {
-          const labeled = `Inflection. ${plain}`;
-          for (const chunk of chunkTextForTts(labeled)) {
-            q.enqueue(chunk);
+        const lastMsg =
+          session.gmMessages.length > 0
+            ? session.gmMessages[session.gmMessages.length - 1]
+            : undefined;
+        /** Inflection sits below the transcript; defer until GM stream is idle and the latest row is not a pending user turn (so GM prose lands before crisis TTS). */
+        const deferInflectionTts =
+          gmComposing || lastMsg?.role === "user";
+
+        if (!deferInflectionTts) {
+          ttsSeenKeysRef.current.add(k);
+          const plain = markdownishToSpeechText(session.crisis.prompt);
+          if (plain) {
+            const labeled = `Inflection. ${plain}`;
+            const inflChunks = chunkTextForTts(labeled);
+            for (const chunk of inflChunks) {
+              q.enqueue(chunk);
+            }
           }
         }
       }
@@ -558,6 +570,7 @@ export default function NationForgeBoard() {
     crisis?.id,
     crisis?.prompt,
     getTtsQueue,
+    gmComposing,
   ]);
 
   const canSendTurn = useMemo(() => {
