@@ -25,7 +25,8 @@
 
 ## NationForge — board layout (2026)
 
-- **Text-first single column**: After the forge, the board uses a single `max-w-3xl` flow: chronicle + turn composer first; **your** seat shows a compact `StatRibbon` with full `NationCard` in `<details>`; governance scratch lives in collapsed **Between beats**; **World shocks**, **Table roster** (names + forge status), and **Structured messages** (bilateral threads) are optional `<details>` at the bottom so prose stays primary. Seated players with a token get **POV locked** to their nation (no POV `<select>`). Inflection stays a high-contrast violet card when active.
+- **Text-first single column**: After the forge, the board uses a single `max-w-3xl` flow: chronicle + turn composer first; **your** seat shows a compact `StatRibbon` with full `NationCard` in `<details>`; governance scratch lives in collapsed **Between beats**; **World shocks**, **Table roster** (names + forge status), and **Structured messages** (bilateral threads) are optional `<details>` at the bottom so prose stays primary. Seated players with a token get **POV locked** to their nation (no POV `<select>`).
+- **Inflection in the read/write column**: When `awaiting_decision`, the crisis **prompt** sits in the Chronicle card (below GM prose; long prompts use line-clamp + “Read full inflection”). A compact **Inflection** strip under the chronicle seat banner links **Jump to answer** (scroll to `#inflection-answer`). Radio options and “Something else” live **above Storyline** in the composer; `aria-live` announces each new `crisis.id` once. No separate full-page violet inflection card.
 
 ## NationForge — chronicle strip, governance, and diplomacy
 

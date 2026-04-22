@@ -65,6 +65,8 @@ let openingBriefCooldownUntil = 0;
 
 const POLL_MS = 2500;
 const POLL_MS_GM_RUNNING = 650;
+/** Above this length, crisis prompt in Chronicle uses line-clamp + details. */
+const CRISIS_PROMPT_COLLAPSE_LEN = 220;
 
 async function readFetchErrorBody(res: Response): Promise<string> {
   const t = await res.text();
@@ -149,6 +151,9 @@ export default function NationForgeBoard() {
   const [domesticSaveError, setDomesticSaveError] = useState<string | null>(null);
   const domesticDirtyRef = useRef(false);
   const domesticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Screen reader: announce each crisis id once (not on every poll). */
+  const inflectionAnnouncedCrisisIdRef = useRef<string | null>(null);
+  const [inflectionAriaNotice, setInflectionAriaNotice] = useState("");
 
   const [diplomacyToId, setDiplomacyToId] = useState("");
   const [diplomacyMessage, setDiplomacyMessage] = useState("");
@@ -337,6 +342,22 @@ export default function NationForgeBoard() {
       introDelivered &&
       session.phase === "awaiting_decision",
   );
+
+  useEffect(() => {
+    if (!session?.crisis || !inflectionActive) {
+      if (!session?.crisis) {
+        inflectionAnnouncedCrisisIdRef.current = null;
+        setInflectionAriaNotice("");
+      }
+      return;
+    }
+    const id = session.crisis.id;
+    if (inflectionAnnouncedCrisisIdRef.current === id) return;
+    inflectionAnnouncedCrisisIdRef.current = id;
+    const p = session.crisis.prompt.trim();
+    const clip = p.length > 160 ? `${p.slice(0, 160)}…` : p;
+    setInflectionAriaNotice(`New inflection. ${clip}`);
+  }, [session?.crisis, inflectionActive]);
 
   const canSendTurn = useMemo(() => {
     if (!session?.gameStarted || !narrative.trim()) return false;
@@ -788,6 +809,36 @@ export default function NationForgeBoard() {
         </div>
       ) : null}
 
+      {inflectionActive && crisis ? (
+        <>
+          <div
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-300/90 bg-violet-50/90 px-3 py-2.5 dark:border-violet-800/60 dark:bg-violet-950/40"
+            role="region"
+            aria-label="Inflection open"
+          >
+            <p className="text-xs font-medium text-violet-950 dark:text-violet-100">
+              Inflection — the table needs a clear answer. Pick a path and write
+              your beat below, then{" "}
+              <span className="whitespace-nowrap">Send to GM</span>.
+            </p>
+            <button
+              type="button"
+              className="shrink-0 rounded-md border border-violet-400 bg-white px-2.5 py-1 text-xs font-medium text-violet-900 shadow-sm hover:bg-violet-50 dark:border-violet-600 dark:bg-zinc-900 dark:text-violet-100 dark:hover:bg-violet-950/60"
+              onClick={() =>
+                document
+                  .getElementById("inflection-answer")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }
+            >
+              Jump to answer
+            </button>
+          </div>
+          <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+            {inflectionAriaNotice}
+          </div>
+        </>
+      ) : null}
+
       {gmComposing ? (
         <div className="w-full rounded-xl border border-sky-200 bg-gradient-to-r from-sky-50 to-white px-4 py-3 text-sm shadow-sm dark:border-sky-900/50 dark:from-sky-950/50 dark:to-zinc-950">
           <p className="font-semibold text-sky-950 dark:text-sky-100">
@@ -852,83 +903,6 @@ export default function NationForgeBoard() {
       ) : null}
 
       <div className="space-y-6">
-          {inflectionActive && crisis ? (
-            <section className="relative overflow-hidden rounded-2xl border-2 border-violet-400/80 bg-gradient-to-b from-violet-100 via-white to-violet-50/40 px-5 py-6 shadow-lg shadow-violet-500/10 dark:border-violet-500/50 dark:from-violet-950/80 dark:via-zinc-950 dark:to-violet-950/50 dark:shadow-violet-950/40">
-              <div className="absolute right-4 top-4 rounded-full bg-violet-600 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white dark:bg-violet-400 dark:text-violet-950">
-                Inflection
-              </div>
-              <p className="pr-24 text-xs font-medium uppercase tracking-wide text-violet-800 dark:text-violet-200">
-                The table needs a clear answer · round {session.roundIndex}
-              </p>
-              {crisisInvolvedNames.length > 0 ? (
-                <p className="mt-1 text-[11px] text-violet-700/90 dark:text-violet-300/90">
-                  Focus: {crisisInvolvedNames.join(", ")}
-                </p>
-              ) : null}
-              <p className="mt-3 rounded-lg border border-violet-200/70 bg-violet-50/80 px-3 py-2.5 text-xs leading-relaxed text-violet-950 dark:border-violet-800/60 dark:bg-violet-950/40 dark:text-violet-100/95">
-                <span className="font-semibold">You declare what your nation tries;</span> the GM
-                (AI) narrates consequences in the next chronicle beat — it does
-                not silently pick a/b/c/d for you. Choose a listed path or write
-                your own under Something else, then flesh it out in{" "}
-                <span className="font-semibold">Storyline</span> below and press{" "}
-                <span className="font-semibold">Send to GM</span>. There is no
-                separate submit here;{" "}
-                <span className="whitespace-nowrap">Enter</span> in text areas
-                only starts a new line.
-              </p>
-              <p className="mt-4 whitespace-pre-wrap text-lg font-medium leading-relaxed text-zinc-900 dark:text-zinc-50">
-                {crisis.prompt}
-              </p>
-              <div className="mt-5 grid gap-2 sm:grid-cols-2">
-                {crisis.options.map((o) => (
-                  <label
-                    key={o.id}
-                    className="flex cursor-pointer items-start gap-3 rounded-xl border border-violet-200/90 bg-white/90 px-4 py-3 text-sm shadow-sm transition hover:border-violet-400 hover:shadow-md dark:border-violet-800/60 dark:bg-zinc-900/90 dark:hover:border-violet-500"
-                  >
-                    <input
-                      type="radio"
-                      name="crisis-main"
-                      className="mt-1"
-                      checked={crisisChoiceId === o.id}
-                      onChange={() => {
-                        setCrisisChoiceId(o.id);
-                        setCustomCrisisResponse("");
-                      }}
-                      disabled={!session.gameStarted}
-                    />
-                    <span className="leading-snug text-zinc-800 dark:text-zinc-100">
-                      <span className="mr-2 font-mono text-[10px] text-violet-500">
-                        {o.id}
-                      </span>
-                      {o.label}
-                    </span>
-                  </label>
-                ))}
-              </div>
-              <div className="mt-5 rounded-xl border border-violet-200/60 bg-white/60 p-4 dark:border-violet-800/50 dark:bg-zinc-900/40">
-                <label className="text-xs font-medium text-violet-900 dark:text-violet-200">
-                  Something else (instead of a listed path)
-                </label>
-                <textarea
-                  className="mt-2 min-h-[4.5rem] w-full rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm dark:border-violet-800 dark:bg-zinc-950 dark:text-zinc-100"
-                  value={customCrisisResponse}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setCustomCrisisResponse(v);
-                    if (v.trim()) setCrisisChoiceId("");
-                  }}
-                  placeholder="A plan the listed options do not cover…"
-                  disabled={!session.gameStarted}
-                />
-              </div>
-              <p className="mt-4 text-xs text-violet-800/90 dark:text-violet-200/85">
-                Make the radio choice match what you say in Storyline so the GM
-                can honor both. The world may still throw emergent shocks you did
-                not order — by design.
-              </p>
-            </section>
-          ) : null}
-
           {session.gameStarted &&
           !waitingForTableOpen &&
           crisis &&
@@ -937,8 +911,8 @@ export default function NationForgeBoard() {
             <div className="rounded-xl border border-sky-300/80 bg-sky-50/90 px-4 py-3 text-sm text-sky-950 dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-100">
               <p className="font-medium">GM is resolving this inflection…</p>
               <p className="mt-1 text-xs text-sky-900/85 dark:text-sky-200/85">
-                The crisis prompt stays on the table; streamed prose appears in
-                Chronicle when this beat finishes.
+                Your inflection prompt stays in the Chronicle above; streamed
+                prose appears there when this beat finishes.
               </p>
             </div>
           ) : null}
@@ -999,12 +973,17 @@ export default function NationForgeBoard() {
 
           {lastGmChapter ||
       gmStreamText ||
-      (session.gameStarted && session.phase === "gm_running") ? (
+      (session.gameStarted && session.phase === "gm_running") ||
+      (inflectionActive && crisis) ? (
         <section className="rounded-2xl border border-zinc-200 bg-white px-5 py-5 dark:border-zinc-700 dark:bg-zinc-900">
           <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
             {gmStreamText || session.phase === "gm_running"
               ? "Chronicle — GM reply (live)"
-              : "Chronicle — last GM reply"}
+              : lastGmChapter
+                ? "Chronicle — last GM reply"
+                : inflectionActive && crisis
+                  ? "Chronicle — inflection"
+                  : "Chronicle"}
           </p>
           {gmStreamText ? (
             <p className="mt-3 whitespace-pre-wrap text-base leading-relaxed text-zinc-900 dark:text-zinc-100">
@@ -1027,7 +1006,7 @@ export default function NationForgeBoard() {
                 </details>
               ) : null}
             </>
-          ) : (
+          ) : session.gameStarted && session.phase === "gm_running" ? (
             <div className="mt-4 space-y-2" aria-busy="true">
               <p className="text-sm text-zinc-600 dark:text-zinc-400">
                 Composing this beat — streamed text shows here on the browser
@@ -1040,7 +1019,58 @@ export default function NationForgeBoard() {
                 <div className="h-3 w-[80%] animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
               </div>
             </div>
-          )}
+          ) : inflectionActive && crisis ? (
+            <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
+              Latest GM prose will appear here when the table has a paragraph for
+              this moment. The inflection prompt is below — that is what you are
+              answering now.
+            </p>
+          ) : null}
+          {inflectionActive && crisis ? (
+            <div className="mt-5 border-t border-violet-200/80 pt-5 dark:border-violet-800/50">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-violet-700 dark:text-violet-300">
+                Inflection · round {session.roundIndex}
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-violet-900/95 dark:text-violet-100/90">
+                The moment turns on you: pick how your nation commits (choices
+                under <span className="font-semibold">Storyline</span> below),
+                then answer in prose and use{" "}
+                <span className="font-semibold">Send to GM</span>. The GM writes
+                what happens next —{" "}
+                <span className="whitespace-nowrap">Enter</span> only adds lines
+                in text areas.
+              </p>
+              {crisisInvolvedNames.length > 0 ? (
+                <p className="mt-2 text-[11px] font-medium text-violet-800 dark:text-violet-200/90">
+                  Focus: {crisisInvolvedNames.join(", ")}
+                </p>
+              ) : null}
+              {crisis.prompt.length > CRISIS_PROMPT_COLLAPSE_LEN ? (
+                <>
+                  <p className="mt-3 line-clamp-3 text-sm font-medium leading-snug text-zinc-900 dark:text-zinc-50">
+                    {crisis.prompt}
+                  </p>
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs font-medium text-blue-600 underline dark:text-blue-400">
+                      Read full inflection
+                    </summary>
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
+                      {crisis.prompt}
+                    </p>
+                  </details>
+                </>
+              ) : (
+                <p className="mt-3 whitespace-pre-wrap text-sm font-medium leading-relaxed text-zinc-900 dark:text-zinc-50">
+                  {crisis.prompt}
+                </p>
+              )}
+              <p className="mt-3 text-[11px] text-violet-800/90 dark:text-violet-200/85">
+                Match your radio or &quot;Something else&quot; pick to what you
+                say in Storyline. Emergent shocks you did not order can still land
+                — by design.
+              </p>
+            </div>
+          ) : null}
         </section>
       ) : (
         <p className="text-center text-sm text-zinc-500">
@@ -1103,6 +1133,63 @@ export default function NationForgeBoard() {
             </div>
           )}
 
+          {inflectionActive && crisis ? (
+            <div
+              id="inflection-answer"
+              className="mt-5 scroll-mt-24 rounded-xl border border-violet-200/90 bg-violet-50/50 p-4 dark:border-violet-800/50 dark:bg-violet-950/30"
+            >
+              <p className="text-xs font-semibold uppercase tracking-wide text-violet-900 dark:text-violet-200">
+                Your answer to this inflection
+              </p>
+              <p className="mt-1 text-[11px] text-violet-800/90 dark:text-violet-200/85">
+                Choose one listed path or &quot;Something else&quot; — not both
+                — then align your Storyline with that choice.
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {crisis.options.map((o) => (
+                  <label
+                    key={o.id}
+                    className="flex cursor-pointer items-start gap-3 rounded-xl border border-violet-200/90 bg-white/90 px-3 py-2.5 text-sm shadow-sm transition hover:border-violet-400 dark:border-violet-800/60 dark:bg-zinc-900/90 dark:hover:border-violet-500"
+                  >
+                    <input
+                      type="radio"
+                      name="crisis-main"
+                      className="mt-1"
+                      checked={crisisChoiceId === o.id}
+                      onChange={() => {
+                        setCrisisChoiceId(o.id);
+                        setCustomCrisisResponse("");
+                      }}
+                      disabled={!session.gameStarted}
+                    />
+                    <span className="leading-snug text-zinc-800 dark:text-zinc-100">
+                      <span className="mr-2 font-mono text-[10px] text-violet-500">
+                        {o.id}
+                      </span>
+                      {o.label}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <div className="mt-3 rounded-lg border border-violet-200/70 bg-white/70 p-3 dark:border-violet-800/50 dark:bg-zinc-900/50">
+                <label className="text-xs font-medium text-violet-900 dark:text-violet-200">
+                  Something else (instead of a listed path)
+                </label>
+                <textarea
+                  className="mt-1.5 min-h-[4rem] w-full rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm dark:border-violet-800 dark:bg-zinc-950 dark:text-zinc-100"
+                  value={customCrisisResponse}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setCustomCrisisResponse(v);
+                    if (v.trim()) setCrisisChoiceId("");
+                  }}
+                  placeholder="A plan the listed options do not cover…"
+                  disabled={!session.gameStarted}
+                />
+              </div>
+            </div>
+          ) : null}
+
           <label className="mt-5 block text-sm font-medium text-zinc-800 dark:text-zinc-200">
             Storyline — write freely
           </label>
@@ -1128,8 +1215,9 @@ export default function NationForgeBoard() {
               Governance notes
             </span>{" "}
             below — your internal brief for the GM. When an inflection is live,
-            pick a path in the violet banner (or describe something else there).
-            Emergent world shocks you did not directly cause are intentional.
+            use the choices above and the prompt in Chronicle; then send once
+            with <span className="font-semibold">Send to GM</span>. Emergent
+            world shocks you did not directly cause are intentional.
           </p>
           <textarea
             className="mt-3 min-h-[min(50vh,22rem)] w-full resize-y rounded-xl border border-zinc-300 bg-white px-4 py-3 text-base leading-relaxed text-zinc-900 shadow-inner outline-none ring-zinc-400 focus:border-zinc-500 focus:ring-2 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-50 dark:focus:border-zinc-500"
