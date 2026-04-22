@@ -11,7 +11,8 @@ export async function GET() {
       updatedAt: s.updatedAt,
       roundIndex: s.roundIndex,
       phase: s.phase,
-      nationNames: s.nations.map((n) => n.name),
+      nationNames: s.nations.filter((n) => n.forgeComplete).map((n) => n.name),
+      nationsInForge: s.nations.filter((n) => !n.forgeComplete).length,
     })),
   });
 }

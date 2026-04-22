@@ -231,7 +231,19 @@ export function filterSessionForClient(
     };
   });
 
-  const nations = s.nations.map((n) => {
+  const nationRoster = s.nations.map((n) => ({
+    id: n.id,
+    name: n.name,
+    forgeComplete: n.forgeComplete,
+  }));
+
+  const nationsVisible = s.nations.filter(
+    (n) =>
+      n.forgeComplete ||
+      (Boolean(effectiveViewer) && n.id === effectiveViewer),
+  );
+
+  const nations = nationsVisible.map((n) => {
     if (effectiveViewer && n.id === effectiveViewer) {
       return n;
     }
@@ -260,6 +272,7 @@ export function filterSessionForClient(
   return {
     ...rest,
     nations,
+    nationRoster,
     secrets,
     diplomaticOutreach,
     viewerNationId: effectiveViewer,

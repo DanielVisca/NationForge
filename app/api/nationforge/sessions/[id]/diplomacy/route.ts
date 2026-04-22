@@ -103,9 +103,12 @@ export async function POST(req: Request, context: Ctx) {
 
   const fromNation = session.nations.find((n) => n.id === fromNationId);
   const toNation = session.nations.find((n) => n.id === toNationId);
-  if (!fromNation?.forgeComplete || !toNation) {
+  if (!fromNation?.forgeComplete || !toNation?.forgeComplete) {
     return NextResponse.json(
-      { error: "Unknown target nation or your nation is not forge-complete." },
+      {
+        error:
+          "Diplomacy is only between forged nations. Finish your nation builder (and ensure the target has finished theirs).",
+      },
       { status: 400 },
     );
   }

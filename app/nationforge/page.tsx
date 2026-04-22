@@ -16,6 +16,7 @@ async function getSessions() {
       updatedAt: string;
       phase: string;
       nationNames: string[];
+      nationsInForge: number;
     }>;
   };
   return data.sessions;
@@ -30,8 +31,9 @@ export default async function NationForgeIndexPage() {
         NationForge
       </h1>
       <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-        Create a room, then each player claims a seat with their nation name.
-        Everyone runs the same 100-point nation builder (one section at a time)
+        Create a room, then each player starts the nation forge; they only count
+        as an official seat at the table after finishing the 100-point builder and
+        naming their nation. Everyone runs the same builder (one section at a time)
         before the first GM beat; new players can join later and complete the
         builder while the table continues. Stats change only via GM tool calls
         on the server.
@@ -60,7 +62,9 @@ export default async function NationForgeIndexPage() {
               Room {s.roomCode}
               {s.nationNames.length > 0
                 ? ` — ${s.nationNames.join(" vs ")}`
-                : " — empty room"}{" "}
+                : s.nationsInForge > 0
+                  ? ` — ${s.nationsInForge} in nation forge (no official seats yet)`
+                  : " — empty room"}{" "}
               ({s.phase})
             </Link>
           </li>

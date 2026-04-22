@@ -43,7 +43,7 @@ export default function JoinNationForgeInner() {
       });
       if (!res.ok) {
         const j = (await res.json()) as { error?: string };
-        throw new Error(j.error ?? "Could not claim seat");
+        throw new Error(j.error ?? "Could not start nation forge");
       }
       const data = (await res.json()) as {
         sessionId: string;
@@ -86,10 +86,11 @@ export default function JoinNationForgeInner() {
     <div className="mx-auto max-w-md px-4 py-10">
       <h1 className="text-xl font-semibold">Join NationForge</h1>
       <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-        Enter the 6-character room code. Use “Claim seat” to run
-        the 100-point builder — you will name your nation at the end of the
-        wizard (with an AI suggestion you can edit). An optional nickname here
-        only labels your seat until then.
+        Enter the 6-character room code. Use “Start nation forge” to open the
+        100-point builder — you are not shown as an official seat to other
+        players until you finish and name your nation (with an AI suggestion you
+        can edit). An optional nickname here only labels your builder until
+        then.
       </p>
       <label className="mt-6 block text-sm font-medium">Room code</label>
       <input
@@ -128,7 +129,7 @@ export default function JoinNationForgeInner() {
           className="w-full rounded-lg bg-zinc-900 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
           onClick={() => void claimSeat()}
         >
-          {busy ? "…" : "Claim seat & open builder"}
+          {busy ? "…" : "Start nation forge & open builder"}
         </button>
         <button
           type="button"

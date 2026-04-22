@@ -175,9 +175,20 @@ export default function NationForgeBoard() {
 
   const crisis = session?.crisis ?? null;
 
-  const chronicleSeatNation = useMemo(() => {
-    if (!session?.activeNationId) return undefined;
-    return session.nations.find((n) => n.id === session.activeNationId);
+  const chronicleSeatDisplay = useMemo(() => {
+    const activeId = session?.activeNationId?.trim();
+    if (!session || !activeId) {
+      return { primary: "—", waitHint: "another seat" };
+    }
+    const inView = session.nations.find((n) => n.id === activeId);
+    const name = inView?.name?.trim();
+    if (name) {
+      return { primary: name, waitHint: name };
+    }
+    return {
+      primary: "Another player (finishing their nation builder)",
+      waitHint: "another seat (nation forge still in progress)",
+    };
   }, [session]);
 
   const crisisInvolvedNames = useMemo(() => {
@@ -314,7 +325,7 @@ export default function NationForgeBoard() {
       });
       if (!res.ok) {
         const j = (await res.json()) as { error?: string };
-        throw new Error(j.error ?? "Could not claim seat");
+        throw new Error(j.error ?? "Could not start nation forge");
       }
       const data = (await res.json()) as {
         sessionId: string;
@@ -647,8 +658,9 @@ export default function NationForgeBoard() {
         <details className="max-w-md rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
           <summary className="cursor-pointer font-semibold">Share & join</summary>
           <p className="mt-2 text-zinc-600 dark:text-zinc-400">
-            Others join with the room code (optional seat nickname; the nation
-            name is set after the 100-point builder). Or use this link:
+            Others start the nation forge with the room code (optional nickname
+            until they name the nation). They appear as official table seats only
+            after the builder is finished. Or use this link:
           </p>
           <div className="mt-2 font-mono break-all text-[11px]">
             {origin}/nationforge/join?code={session.roomCode}
@@ -658,8 +670,11 @@ export default function NationForgeBoard() {
               <li className="font-medium text-amber-900 dark:text-amber-200">
                 Seat tokens (host copy)
               </li>
-              {session.nations.map((n) => (
+              {(session.nationRoster ?? []).map((n) => (
                 <li key={n.id} className="font-mono text-[10px] break-all">
+                  <span className="text-zinc-600 dark:text-zinc-400">
+                    {n.forgeComplete ? "At table" : "Building"} ·{" "}
+                  </span>
                   {n.name}: {hostTokens[n.id] ?? "—"}
                 </li>
               ))}
@@ -671,20 +686,18 @@ export default function NationForgeBoard() {
       {session.gameStarted && !waitingForTableOpen ? (
         <div className="rounded-xl border border-teal-200 bg-teal-50/90 px-4 py-3 text-sm text-teal-950 shadow-sm dark:border-teal-900/45 dark:bg-teal-950/35 dark:text-teal-50">
           <p className="font-semibold">
-            Chronicle seat:{" "}
-            {chronicleSeatNation?.name?.trim() ||
-              session.activeNationId ||
-              "—"}
+            Chronicle seat: {chronicleSeatDisplay.primary}
           </p>
           {session.viewerNationId ? (
             <p className="mt-1 text-xs text-teal-900/90 dark:text-teal-100/85">
               {session.viewerNationId === session.activeNationId
                 ? "You hold the chronicle seat (opening beat or last POV sent to the GM)."
-                : `Waiting while ${chronicleSeatNation?.name?.trim() || "another seat"} anchors the last beat.`}
+                : `Waiting while ${chronicleSeatDisplay.waitHint} anchors the last beat.`}
             </p>
           ) : (
             <p className="mt-1 text-xs text-teal-900/85 dark:text-teal-100/80">
-              Claim a seat to see whether you hold this chronicle seat.
+              Start the nation forge (join link) to see whether you hold this
+              chronicle seat once your nation is forged.
             </p>
           )}
           {session.phase === "awaiting_decision" &&
@@ -729,14 +742,14 @@ export default function NationForgeBoard() {
       {!urlToken ? (
         <section className="rounded-2xl border border-blue-200 bg-blue-50/80 px-5 py-5 dark:border-blue-900/50 dark:bg-blue-950/30">
           <h2 className="text-sm font-semibold text-blue-950 dark:text-blue-100">
-            Claim your seat
+            Join the table
           </h2>
           <p className="mt-2 text-sm text-blue-900/90 dark:text-blue-200/90">
-            You are spectating without a seat token. Claim a seat to run the
-            100-point builder — you will name your nation at the end of the
-            wizard (with an AI suggestion you can edit). Optional: a short
-            nickname here labels your seat until then. You can join after others
-            have started; your builder runs privately until you finish.
+            You are spectating without a seat token. Start the nation forge to
+            run the 100-point builder — other players only see you as an official
+            seat at the table after you finish and name your nation. Optional: a
+            short nickname here labels your builder until then. You can join after
+            others have started; your builder runs privately until you finish.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <input
@@ -751,7 +764,7 @@ export default function NationForgeBoard() {
               className="rounded-lg bg-blue-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-blue-200 dark:text-blue-950"
               onClick={() => void claimSeat()}
             >
-              {joinBusy ? "…" : "Claim seat"}
+              {joinBusy ? "…" : "Start nation forge"}
             </button>
           </div>
           {joinError ? (

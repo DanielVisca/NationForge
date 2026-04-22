@@ -44,7 +44,7 @@ export function validatePlayerTurn(
       ok: false,
       error:
         session.nations.length === 0
-          ? "No one has claimed a seat in this room yet."
+          ? "No forged nations in this room yet."
           : "Every nation still in the builder must finish the 100-point forge before the GM opens the chronicle.",
     };
   }
