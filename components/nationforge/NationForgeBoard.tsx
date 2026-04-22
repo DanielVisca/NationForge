@@ -20,6 +20,11 @@ import {
   lastAssistantTextProseFromMessages,
   textProseFromAssistantUiMessage,
 } from "@/lib/nationforge/assistant-ui-prose";
+import {
+  chunkTextForTts,
+  markdownishToSpeechText,
+} from "@/lib/nationforge/markdown-ish-to-speech-text";
+import { createNationForgeTtsQueue } from "@/lib/nationforge/tts-queue";
 import { consumeGmTextStream } from "@/lib/nationforge/consume-gm-stream";
 import { buildOpeningBriefPlayerMessage } from "@/lib/nationforge/opening-brief-narrative";
 import { playerTurnChatDisplayBody } from "@/lib/nationforge/player-input";
@@ -41,6 +46,8 @@ import {
 
 import { NationForgeChatMarkdown } from "./NationForgeChatMarkdown";
 import NationForgeWizard from "./NationForgeWizard";
+
+const NATIONFORGE_TTS_LS = "nationforge-tts-enabled";
 
 function StatRibbon({ nation }: { nation: Nation }) {
   return (
@@ -172,6 +179,18 @@ export default function NationForgeBoard() {
 
   const [joinBusy, setJoinBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+
+  const [ttsEnabled, setTtsEnabled] = useState(false);
+  const ttsQueueRef = useRef<ReturnType<typeof createNationForgeTtsQueue> | null>(
+    null,
+  );
+  const ttsPrimedRef = useRef(false);
+  const ttsSeenKeysRef = useRef<Set<string>>(new Set());
+  const ttsSessionBoundRef = useRef<string | null>(null);
+  const getTtsQueue = useCallback(() => {
+    if (!ttsQueueRef.current) ttsQueueRef.current = createNationForgeTtsQueue();
+    return ttsQueueRef.current;
+  }, []);
 
   const [domesticDraft, setDomesticDraft] = useState("");
   const [domesticSaveState, setDomesticSaveState] = useState<
@@ -422,6 +441,100 @@ export default function NationForgeBoard() {
     gmStreamText,
     inflectionActive,
     session?.crisis?.id,
+  ]);
+
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(NATIONFORGE_TTS_LS);
+      if (v === "1") setTtsEnabled(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NATIONFORGE_TTS_LS, ttsEnabled ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [ttsEnabled]);
+
+  useEffect(() => {
+    return () => {
+      ttsQueueRef.current?.dispose();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!ttsEnabled) {
+      ttsPrimedRef.current = false;
+      ttsSessionBoundRef.current = null;
+      ttsSeenKeysRef.current = new Set();
+      ttsQueueRef.current?.clear();
+      return;
+    }
+    if (ttsSessionBoundRef.current !== sessionId) {
+      ttsSessionBoundRef.current = sessionId;
+      ttsPrimedRef.current = false;
+      ttsSeenKeysRef.current = new Set();
+      ttsQueueRef.current?.clear();
+    }
+    if (!session) return;
+
+    if (!ttsPrimedRef.current) {
+      const nextSeen = new Set<string>();
+      session.gmMessages.forEach((m, i) => {
+        if (m.role !== "assistant") return;
+        if (!textProseFromAssistantUiMessage(m).trim()) return;
+        const id = typeof m.id === "string" && m.id ? m.id : `i-${i}`;
+        nextSeen.add(`gm:${id}`);
+      });
+      if (inflectionActive && session.crisis) {
+        nextSeen.add(`inflection:${session.crisis.id}:${session.crisis.prompt}`);
+      }
+      ttsSeenKeysRef.current = nextSeen;
+      ttsPrimedRef.current = true;
+      return;
+    }
+
+    const q = getTtsQueue();
+    session.gmMessages.forEach((m, i) => {
+      if (m.role !== "assistant") return;
+      const prose = textProseFromAssistantUiMessage(m).trim();
+      if (!prose) return;
+      const id = typeof m.id === "string" && m.id ? m.id : `i-${i}`;
+      const key = `gm:${id}`;
+      if (ttsSeenKeysRef.current.has(key)) return;
+      ttsSeenKeysRef.current.add(key);
+      const plain = markdownishToSpeechText(prose);
+      for (const chunk of chunkTextForTts(plain)) {
+        q.enqueue(chunk);
+      }
+    });
+
+    if (inflectionActive && session.crisis) {
+      const k = `inflection:${session.crisis.id}:${session.crisis.prompt}`;
+      if (!ttsSeenKeysRef.current.has(k)) {
+        ttsSeenKeysRef.current.add(k);
+        const plain = markdownishToSpeechText(session.crisis.prompt);
+        if (plain) {
+          const labeled = `Inflection. ${plain}`;
+          for (const chunk of chunkTextForTts(labeled)) {
+            q.enqueue(chunk);
+          }
+        }
+      }
+    }
+  }, [
+    ttsEnabled,
+    sessionId,
+    session,
+    session?.updatedAt,
+    inflectionActive,
+    crisis?.id,
+    crisis?.prompt,
+    getTtsQueue,
   ]);
 
   const canSendTurn = useMemo(() => {
@@ -954,6 +1067,31 @@ export default function NationForgeBoard() {
           {session.gameStarted && !waitingForTableOpen && introDelivered ? (
             <section className="flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/90">
               <h2 className="sr-only">NationForge chat</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200/80 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-700 dark:text-zinc-200">
+                  <input
+                    type="checkbox"
+                    className="size-3.5 rounded border-zinc-400 text-violet-600 focus:ring-violet-500 dark:border-zinc-600"
+                    checked={ttsEnabled}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      if (on) ttsPrimedRef.current = false;
+                      setTtsEnabled(on);
+                    }}
+                  />
+                  <span>
+                    Dictate GM &amp; inflection{" "}
+                    <span className="text-zinc-500 dark:text-zinc-400">
+                      (xAI TTS)
+                    </span>
+                  </span>
+                </label>
+                {ttsEnabled ? (
+                  <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                    New lines queue if speech is still playing.
+                  </span>
+                ) : null}
+              </div>
               <div
                 className="max-h-[min(70vh,560px)] min-h-[260px] space-y-3 overflow-y-auto rounded-xl border border-zinc-200/80 bg-zinc-50/90 p-3 dark:border-zinc-700 dark:bg-zinc-900/50"
                 role="log"
