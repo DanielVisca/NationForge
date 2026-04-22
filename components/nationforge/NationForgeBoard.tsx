@@ -8,13 +8,20 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
 import { consumeGmTextStream } from "@/lib/nationforge/consume-gm-stream";
 import { buildOpeningBriefPlayerMessage } from "@/lib/nationforge/opening-brief-narrative";
 import type { PublicGameSession } from "@/lib/nationforge/public-types";
-import type { Nation } from "@/lib/nationforge/schema";
+import {
+  MAX_DIPLOMACY_MESSAGE_LENGTH,
+  MAX_DIPLOMACY_REPLY_LENGTH,
+  MAX_DOMESTIC_SCRATCH_LENGTH,
+  type DiplomaticOutreach,
+  type Nation,
+} from "@/lib/nationforge/schema";
 
 import NationForgeWizard from "./NationForgeWizard";
 
@@ -118,6 +125,20 @@ export default function NationForgeBoard() {
   const [joinBusy, setJoinBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
 
+  const [domesticDraft, setDomesticDraft] = useState("");
+  const [domesticSaveState, setDomesticSaveState] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [domesticSaveError, setDomesticSaveError] = useState<string | null>(null);
+  const domesticDirtyRef = useRef(false);
+  const domesticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [diplomacyToId, setDiplomacyToId] = useState("");
+  const [diplomacyMessage, setDiplomacyMessage] = useState("");
+  const [diplomacyBusy, setDiplomacyBusy] = useState(false);
+  const [diplomacyError, setDiplomacyError] = useState<string | null>(null);
+  const [replyDraftById, setReplyDraftById] = useState<Record<string, string>>({});
+
   const load = useCallback(async () => {
     const token = urlToken ?? "";
     const res = await fetch(
@@ -154,6 +175,18 @@ export default function NationForgeBoard() {
 
   const crisis = session?.crisis ?? null;
 
+  const chronicleSeatNation = useMemo(() => {
+    if (!session?.activeNationId) return undefined;
+    return session.nations.find((n) => n.id === session.activeNationId);
+  }, [session]);
+
+  const crisisInvolvedNames = useMemo(() => {
+    if (!session?.crisis?.activeNationIds?.length) return [];
+    return session.crisis.activeNationIds
+      .map((id) => session.nations.find((n) => n.id === id)?.name)
+      .filter((name): name is string => Boolean(name));
+  }, [session]);
+
   const lastGmChapter = useMemo(() => {
     if (!session?.gmMessages?.length) return "";
     return lastAssistantStory(session.gmMessages);
@@ -168,6 +201,45 @@ export default function NationForgeBoard() {
     if (!session?.viewerNationId) return undefined;
     return session.nations.find((n) => n.id === session.viewerNationId);
   }, [session]);
+
+  const otherNations = useMemo(() => {
+    if (!session?.viewerNationId) return [];
+    return session.nations.filter((n) => n.id !== session.viewerNationId);
+  }, [session]);
+
+  const sortedDiplomacy = useMemo(() => {
+    const list = session?.diplomaticOutreach ?? [];
+    return [...list].sort(
+      (a, b) => Date.parse(b.at) - Date.parse(a.at),
+    ) as DiplomaticOutreach[];
+  }, [session?.diplomaticOutreach]);
+
+  useEffect(() => {
+    if (!otherNations.length) return;
+    if (!diplomacyToId || !otherNations.some((n) => n.id === diplomacyToId)) {
+      setDiplomacyToId(otherNations[0]!.id);
+    }
+  }, [otherNations, diplomacyToId]);
+
+  useEffect(() => {
+    domesticDirtyRef.current = false;
+  }, [urlToken, session?.viewerNationId]);
+
+  useEffect(() => {
+    if (!myNation) return;
+    if (!domesticDirtyRef.current) {
+      setDomesticDraft(myNation.domesticScratch ?? "");
+    }
+  }, [myNation?.domesticScratch, myNation?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (domesticDebounceRef.current) {
+        clearTimeout(domesticDebounceRef.current);
+        domesticDebounceRef.current = null;
+      }
+    };
+  }, []);
 
   const showWizard = Boolean(
     urlToken && myNation && !myNation.forgeComplete && myNation.forgeProgress,
@@ -323,6 +395,141 @@ export default function NationForgeBoard() {
     load,
   ]);
 
+  const saveDomesticScratch = useCallback(
+    async (value: string) => {
+      if (!sessionId || !urlToken) return;
+      const trimmed = value.trim();
+      if (trimmed.length > MAX_DOMESTIC_SCRATCH_LENGTH) return;
+      setDomesticSaveState("saving");
+      setDomesticSaveError(null);
+      try {
+        const res = await fetch(
+          `/api/nationforge/sessions/${sessionId}/domestic?token=${encodeURIComponent(urlToken)}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ domesticScratch: value }),
+          },
+        );
+        if (res.status === 429) {
+          const j = (await res.json()) as { retryAfterMs?: number };
+          throw new Error(
+            `Rate limited. Retry after ~${Math.ceil((j.retryAfterMs ?? 5000) / 1000)}s`,
+          );
+        }
+        if (!res.ok) {
+          const errText = await readFetchErrorBody(res);
+          throw new Error(errText);
+        }
+        const fresh = (await res.json()) as PublicGameSession;
+        setSession(fresh);
+        const me = fresh.nations.find((n) => n.id === fresh.viewerNationId);
+        setDomesticDraft(me?.domesticScratch ?? trimmed);
+        domesticDirtyRef.current = false;
+        setDomesticSaveState("saved");
+      } catch (e) {
+        setDomesticSaveState("error");
+        setDomesticSaveError(e instanceof Error ? e.message : "Save failed");
+      }
+    },
+    [sessionId, urlToken],
+  );
+
+  const scheduleDomesticSave = useCallback(
+    (value: string) => {
+      if (!urlToken || !myNation?.forgeComplete) return;
+      if (domesticDebounceRef.current) {
+        clearTimeout(domesticDebounceRef.current);
+      }
+      domesticDebounceRef.current = setTimeout(() => {
+        domesticDebounceRef.current = null;
+        void saveDomesticScratch(value);
+      }, 450);
+    },
+    [saveDomesticScratch, urlToken, myNation?.forgeComplete],
+  );
+
+  const sendDiplomacy = useCallback(async () => {
+    if (!sessionId || !urlToken || !diplomacyToId.trim()) return;
+    const msg = diplomacyMessage.trim();
+    if (!msg) {
+      setDiplomacyError("Write a message before sending.");
+      return;
+    }
+    setDiplomacyBusy(true);
+    setDiplomacyError(null);
+    try {
+      const res = await fetch(
+        `/api/nationforge/sessions/${sessionId}/diplomacy?token=${encodeURIComponent(urlToken)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ toNationId: diplomacyToId, message: msg }),
+        },
+      );
+      if (res.status === 429) {
+        const j = (await res.json()) as { retryAfterMs?: number };
+        throw new Error(
+          `Rate limited. Retry after ~${Math.ceil((j.retryAfterMs ?? 5000) / 1000)}s`,
+        );
+      }
+      if (!res.ok) {
+        throw new Error(await readFetchErrorBody(res));
+      }
+      const fresh = (await res.json()) as PublicGameSession;
+      setSession(fresh);
+      setDiplomacyMessage("");
+    } catch (e) {
+      setDiplomacyError(e instanceof Error ? e.message : "Send failed");
+    } finally {
+      setDiplomacyBusy(false);
+    }
+  }, [sessionId, urlToken, diplomacyToId, diplomacyMessage]);
+
+  const sendDiplomacyReply = useCallback(
+    async (outreachId: string, text: string) => {
+      if (!sessionId || !urlToken) return;
+      const trimmed = text.trim();
+      if (!trimmed) {
+        setDiplomacyError("Reply cannot be empty.");
+        return;
+      }
+      setDiplomacyBusy(true);
+      setDiplomacyError(null);
+      try {
+        const res = await fetch(
+          `/api/nationforge/sessions/${sessionId}/diplomacy/${encodeURIComponent(outreachId)}/reply?token=${encodeURIComponent(urlToken)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reply: trimmed }),
+          },
+        );
+        if (res.status === 429) {
+          const j = (await res.json()) as { retryAfterMs?: number };
+          throw new Error(
+            `Rate limited. Retry after ~${Math.ceil((j.retryAfterMs ?? 5000) / 1000)}s`,
+          );
+        }
+        if (!res.ok) {
+          throw new Error(await readFetchErrorBody(res));
+        }
+        const fresh = (await res.json()) as PublicGameSession;
+        setSession(fresh);
+        setReplyDraftById((prev) => {
+          const next = { ...prev };
+          delete next[outreachId];
+          return next;
+        });
+      } catch (e) {
+        setDiplomacyError(e instanceof Error ? e.message : "Reply failed");
+      } finally {
+        setDiplomacyBusy(false);
+      }
+    },
+    [sessionId, urlToken],
+  );
+
   const submitOpeningBrief = useCallback(async () => {
     if (!sessionId || !session?.crisis) return;
     if (openingBriefInFlight) return;
@@ -461,6 +668,42 @@ export default function NationForgeBoard() {
         </details>
       </div>
 
+      {session.gameStarted && !waitingForTableOpen ? (
+        <div className="rounded-xl border border-teal-200 bg-teal-50/90 px-4 py-3 text-sm text-teal-950 shadow-sm dark:border-teal-900/45 dark:bg-teal-950/35 dark:text-teal-50">
+          <p className="font-semibold">
+            Chronicle seat:{" "}
+            {chronicleSeatNation?.name?.trim() ||
+              session.activeNationId ||
+              "—"}
+          </p>
+          {session.viewerNationId ? (
+            <p className="mt-1 text-xs text-teal-900/90 dark:text-teal-100/85">
+              {session.viewerNationId === session.activeNationId
+                ? "You hold the chronicle seat (opening beat or last POV sent to the GM)."
+                : `Waiting while ${chronicleSeatNation?.name?.trim() || "another seat"} anchors the last beat.`}
+            </p>
+          ) : (
+            <p className="mt-1 text-xs text-teal-900/85 dark:text-teal-100/80">
+              Claim a seat to see whether you hold this chronicle seat.
+            </p>
+          )}
+          {session.phase === "awaiting_decision" &&
+          session.crisis &&
+          crisisInvolvedNames.length > 0 ? (
+            <>
+              <p className="mt-2 text-xs font-medium text-teal-900 dark:text-teal-100/90">
+                Crisis involves: {crisisInvolvedNames.join(", ")}
+              </p>
+              <p className="mt-1 text-[11px] text-teal-800/90 dark:text-teal-200/80">
+                {session.crisis.activeNationIds.length <= 1
+                  ? "This inflection highlights a single seat; bilateral diplomacy below runs between two nations anytime."
+                  : "This inflection spans multiple seats; you still develop your nation continuously and negotiate one-to-one on the side."}
+              </p>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
       {gmComposing ? (
         <div className="w-full rounded-xl border border-sky-200 bg-gradient-to-r from-sky-50 to-white px-4 py-3 text-sm shadow-sm dark:border-sky-900/50 dark:from-sky-950/50 dark:to-zinc-950">
           <p className="font-semibold text-sky-950 dark:text-sky-100">
@@ -522,6 +765,202 @@ export default function NationForgeBoard() {
           Your nation is forged. Waiting for everyone else to finish their
           builder before the GM opens the chronicle.
         </div>
+      ) : null}
+
+      {urlToken && myNation?.forgeComplete ? (
+        <section className="rounded-xl border border-zinc-200 bg-zinc-50/80 px-4 py-4 dark:border-zinc-700 dark:bg-zinc-900/50">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+            Governance and society
+          </p>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
+            Steer domestic policy, civic projects, and national mood between GM
+            beats. The GM reads this as continuity for your nation; it does not
+            change stats by itself. Other seats do not see your notes—only their
+            own.
+          </p>
+          <textarea
+            className="mt-3 min-h-[6rem] w-full resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm leading-relaxed text-zinc-900 outline-none ring-zinc-400 focus:border-zinc-500 focus:ring-2 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-zinc-500"
+            value={domesticDraft}
+            maxLength={MAX_DOMESTIC_SCRATCH_LENGTH}
+            onChange={(e) => {
+              const v = e.target.value.slice(0, MAX_DOMESTIC_SCRATCH_LENGTH);
+              domesticDirtyRef.current = true;
+              setDomesticDraft(v);
+              setDomesticSaveState("idle");
+              scheduleDomesticSave(v);
+            }}
+            onBlur={() => {
+              if (domesticDebounceRef.current) {
+                clearTimeout(domesticDebounceRef.current);
+                domesticDebounceRef.current = null;
+              }
+              void saveDomesticScratch(domesticDraft);
+            }}
+            placeholder="What you are building, regulating, or reacting to at home — the GM treats this as your running brief…"
+            spellCheck
+          />
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-500">
+            <span>
+              {domesticDraft.length}/{MAX_DOMESTIC_SCRATCH_LENGTH}
+            </span>
+            {domesticSaveState === "saving" ? (
+              <span className="text-zinc-600 dark:text-zinc-400">Saving…</span>
+            ) : null}
+            {domesticSaveState === "saved" ? (
+              <span className="text-emerald-700 dark:text-emerald-400">Saved</span>
+            ) : null}
+            {domesticSaveState === "error" && domesticSaveError ? (
+              <span className="text-red-600 dark:text-red-400">{domesticSaveError}</span>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {urlToken && myNation?.forgeComplete && otherNations.length > 0 ? (
+        <section className="rounded-xl border border-indigo-200/90 bg-indigo-50/70 px-4 py-4 dark:border-indigo-900/40 dark:bg-indigo-950/35">
+          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-900 dark:text-indigo-200">
+            Diplomatic outreach
+          </p>
+          <p className="mt-1 text-xs text-indigo-950/85 dark:text-indigo-100/85">
+            Open a bilateral channel to another nation: they see only threads
+            they are part of and may reply once—or leave you on read. The GM
+            sees recent exchanges to weave into the world.
+          </p>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div className="min-w-[10rem] flex-1">
+              <label className="text-xs font-medium text-indigo-900 dark:text-indigo-200">
+                To
+              </label>
+              <select
+                className="mt-1 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-indigo-800 dark:bg-zinc-950 dark:text-zinc-100"
+                value={diplomacyToId || otherNations[0]!.id}
+                onChange={(e) => setDiplomacyToId(e.target.value)}
+              >
+                {otherNations.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="min-w-0 flex-[2]">
+              <label className="text-xs font-medium text-indigo-900 dark:text-indigo-200">
+                Message
+              </label>
+              <textarea
+                className="mt-1 min-h-[4.5rem] w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-indigo-800 dark:bg-zinc-950 dark:text-zinc-100"
+                value={diplomacyMessage}
+                maxLength={MAX_DIPLOMACY_MESSAGE_LENGTH}
+                onChange={(e) =>
+                  setDiplomacyMessage(
+                    e.target.value.slice(0, MAX_DIPLOMACY_MESSAGE_LENGTH),
+                  )
+                }
+                placeholder="Envoys, back-channel asks, public communiqués, trial balloons…"
+                spellCheck
+              />
+            </div>
+            <button
+              type="button"
+              disabled={diplomacyBusy || !diplomacyMessage.trim()}
+              className="shrink-0 rounded-lg bg-indigo-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-indigo-200 dark:text-indigo-950"
+              onClick={() => void sendDiplomacy()}
+            >
+              {diplomacyBusy ? "…" : "Send"}
+            </button>
+          </div>
+          {diplomacyError ? (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">{diplomacyError}</p>
+          ) : null}
+          <p className="mt-1 text-[11px] text-indigo-900/70 dark:text-indigo-200/70">
+            {diplomacyMessage.length}/{MAX_DIPLOMACY_MESSAGE_LENGTH} characters
+          </p>
+
+          {sortedDiplomacy.length > 0 ? (
+            <ul className="mt-5 space-y-4 border-t border-indigo-200/60 pt-4 dark:border-indigo-800/50">
+              {sortedDiplomacy.map((o) => {
+                const fromName =
+                  session.nations.find((n) => n.id === o.fromNationId)?.name ??
+                  o.fromNationId;
+                const toName =
+                  session.nations.find((n) => n.id === o.toNationId)?.name ??
+                  o.toNationId;
+                const vid = session.viewerNationId;
+                const iAmSender = vid === o.fromNationId;
+                const iAmRecipient = vid === o.toNationId;
+                return (
+                  <li
+                    key={o.id}
+                    className="rounded-lg border border-indigo-100 bg-white/90 p-3 text-sm dark:border-indigo-900/50 dark:bg-zinc-950/80"
+                  >
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-indigo-700 dark:text-indigo-300">
+                      {new Date(o.at).toLocaleString()} ·{" "}
+                      {iAmSender
+                        ? `You → ${toName}`
+                        : iAmRecipient
+                          ? `${fromName} → you`
+                          : `${fromName} → ${toName}`}
+                    </p>
+                    <p className="mt-2 whitespace-pre-wrap text-zinc-800 dark:text-zinc-200">
+                      {o.message}
+                    </p>
+                    {o.reply ? (
+                      <div className="mt-3 rounded-md border border-indigo-100 bg-indigo-50/80 px-3 py-2 text-xs dark:border-indigo-900/40 dark:bg-indigo-950/50">
+                        <p className="font-medium text-indigo-900 dark:text-indigo-200">
+                          {iAmRecipient ? "Your reply" : `${toName} replied`} ·{" "}
+                          {new Date(o.reply.at).toLocaleString()}
+                        </p>
+                        <p className="mt-1 whitespace-pre-wrap text-zinc-800 dark:text-zinc-200">
+                          {o.reply.text}
+                        </p>
+                      </div>
+                    ) : iAmRecipient ? (
+                      <div className="mt-3 space-y-2">
+                        <textarea
+                          className="min-h-[3.5rem] w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs dark:border-indigo-800 dark:bg-zinc-950"
+                          placeholder="Optional reply (one per thread)…"
+                          maxLength={MAX_DIPLOMACY_REPLY_LENGTH}
+                          value={replyDraftById[o.id] ?? ""}
+                          onChange={(e) =>
+                            setReplyDraftById((prev) => ({
+                              ...prev,
+                              [o.id]: e.target.value.slice(
+                                0,
+                                MAX_DIPLOMACY_REPLY_LENGTH,
+                              ),
+                            }))
+                          }
+                          spellCheck
+                        />
+                        <button
+                          type="button"
+                          disabled={diplomacyBusy || !(replyDraftById[o.id] ?? "").trim()}
+                          className="rounded-lg bg-indigo-800 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-indigo-300 dark:text-indigo-950"
+                          onClick={() =>
+                            void sendDiplomacyReply(
+                              o.id,
+                              replyDraftById[o.id] ?? "",
+                            )
+                          }
+                        >
+                          Send reply
+                        </button>
+                      </div>
+                    ) : iAmSender ? (
+                      <p className="mt-2 text-xs italic text-zinc-500 dark:text-zinc-400">
+                        Awaiting their response (they may ignore this).
+                      </p>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="mt-4 border-t border-indigo-200/60 pt-3 text-xs text-indigo-900/70 dark:border-indigo-800/50 dark:text-indigo-200/70">
+              No threads yet — your sent and received outreach will appear here.
+            </p>
+          )}
+        </section>
       ) : null}
 
       {session.gameStarted &&

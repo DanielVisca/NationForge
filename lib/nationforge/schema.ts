@@ -39,11 +39,36 @@ export type NationForgeProgress = {
   reviewNarrativeMarkdown?: string;
 };
 
+/** Ongoing governance / society development (GM sees full text server-side; peers do not). */
+export const MAX_DOMESTIC_SCRATCH_LENGTH = 1500;
+
+/** Bilateral outreach between two seats; optional reply from the recipient. */
+export const MAX_DIPLOMACY_MESSAGE_LENGTH = 2000;
+export const MAX_DIPLOMACY_REPLY_LENGTH = 2000;
+export const MAX_DIPLOMACY_OUTREACH_TOTAL = 80;
+/** Per-nation cap when serializing governance text into the GM prompt. */
+export const GM_GOVERNANCE_CLIP = 1200;
+
+export type DiplomaticOutreach = {
+  id: string;
+  at: string;
+  fromNationId: string;
+  toNationId: string;
+  message: string;
+  /** Recipient may reply once, or leave unanswered. */
+  reply?: { text: string; at: string };
+};
+
 export type Nation = {
   id: string;
   name: string;
   /** Free-form nation build / government line players maintain */
   buildNotes: string;
+  /**
+   * Ongoing governance and domestic development: policy moves, mood, projects.
+   * Fed to the GM as authoritative context for your nation; hidden from other players’ clients.
+   */
+  domesticScratch: string;
   stats: NationStats;
   reserve: number;
   /** False while the player is stepping through the 100-point builder. */
@@ -102,6 +127,8 @@ export type GameSession = {
   /** Grok thread for GM narration */
   gmMessages: import("ai").UIMessage[];
   lastGmResponseId?: string;
+  /** Bilateral messages; each party sees only threads they are part of (client filter). */
+  diplomaticOutreach: DiplomaticOutreach[];
 };
 
 export const MAX_REALLOC_POINTS_PER_TURN = 10;

@@ -70,6 +70,7 @@ export async function createGameSession(): Promise<GameSession> {
     secrets: [],
     seatTokens: {},
     gmMessages: [],
+    diplomaticOutreach: [],
   };
   store.sessions[id] = session;
   store.roomIndex[roomCode] = id;
@@ -104,6 +105,7 @@ export async function registerNation(
     id: nationId,
     name: provisionalName,
     buildNotes: "Nation forge in progress — finish the builder to take turns.",
+    domesticScratch: "",
     stats: defaultStats(),
     reserve: 0,
     forgeComplete: false,
@@ -229,12 +231,37 @@ export function filterSessionForClient(
     };
   });
 
-  const { seatTokens, secrets: _sessionSecrets, ...rest } = s;
+  const nations = s.nations.map((n) => {
+    if (effectiveViewer && n.id === effectiveViewer) {
+      return n;
+    }
+    const { domesticScratch: _omit, ...pub } = n;
+    void _omit;
+    return { ...pub, domesticScratch: "" };
+  });
+
+  const diplomaticOutreach = (s.diplomaticOutreach ?? []).filter(
+    (o) =>
+      Boolean(effectiveViewer) &&
+      (o.fromNationId === effectiveViewer || o.toNationId === effectiveViewer),
+  );
+
+  const {
+    seatTokens,
+    secrets: _sessionSecrets,
+    nations: _n,
+    diplomaticOutreach: _allOutreach,
+    ...rest
+  } = s;
   void seatTokens;
   void _sessionSecrets;
+  void _n;
+  void _allOutreach;
   return {
     ...rest,
+    nations,
     secrets,
+    diplomaticOutreach,
     viewerNationId: effectiveViewer,
   };
 }

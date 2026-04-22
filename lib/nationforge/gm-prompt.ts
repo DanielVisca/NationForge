@@ -1,7 +1,45 @@
-import type { GameSession } from "./schema";
-import { MAX_REALLOC_POINTS_PER_TURN } from "./schema";
+import type { DiplomaticOutreach, GameSession } from "./schema";
+import {
+  GM_GOVERNANCE_CLIP,
+  MAX_REALLOC_POINTS_PER_TURN,
+} from "./schema";
+
+function clipGovernance(text: string): string {
+  const t = text.trim();
+  if (t.length <= GM_GOVERNANCE_CLIP) return t;
+  return `${t.slice(0, GM_GOVERNANCE_CLIP)}…`;
+}
+
+function clipDiploText(text: string, max: number): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}…`;
+}
+
+const DIPLO_CLIP = 900;
+const RECENT_DIPLOMACY = 32;
+
+function outreachForGm(
+  list: DiplomaticOutreach[],
+  nameById: Map<string, string>,
+): unknown[] {
+  const tail = list.slice(-RECENT_DIPLOMACY);
+  return tail.map((o) => ({
+    at: o.at,
+    from: nameById.get(o.fromNationId) ?? o.fromNationId,
+    to: nameById.get(o.toNationId) ?? o.toNationId,
+    message: clipDiploText(o.message, DIPLO_CLIP),
+    reply: o.reply
+      ? {
+          at: o.reply.at,
+          text: clipDiploText(o.reply.text, DIPLO_CLIP),
+        }
+      : undefined,
+  }));
+}
 
 export function buildGmSystemPrompt(session: GameSession): string {
+  const nameById = new Map(session.nations.map((n) => [n.id, n.name]));
   const stateJson = JSON.stringify(
     {
       roundIndex: session.roundIndex,
@@ -10,10 +48,15 @@ export function buildGmSystemPrompt(session: GameSession): string {
         id: n.id,
         name: n.name,
         buildNotes: n.buildNotes,
+        governanceNotes: clipGovernance(n.domesticScratch ?? ""),
         stats: n.stats,
         reserve: n.reserve,
       })),
       crisis: session.crisis,
+      recentDiplomacy: outreachForGm(
+        session.diplomaticOutreach ?? [],
+        nameById,
+      ),
     },
     null,
     2,
@@ -22,6 +65,9 @@ export function buildGmSystemPrompt(session: GameSession): string {
   return `You are the NationForge GM (promptVersion ${session.promptVersion}).
 
 RULES:
+- Each nation has ongoing governanceNotes (player-authored, updated between turns). Use them to reflect how they govern domestically, internal pressures, and continuity. They are not automatic stat changes unless the player also asks for that in their storyline turn and you apply tools.
+- recentDiplomacy lists bilateral messages between two nations (initiator → recipient, optional reply). Recipients may ignore outreach in the UI; honor who spoke, who answered, and who stayed silent. Weave this into regional politics when relevant.
+- Crises may involve one nation or many (see crisis.activeNationIds). Prefer inflections that match that scope.
 - If the latest player message includes "(orientationRequest: first opening beat — crisis choice deferred)", write a rich orientation to that nation from their locked stats and build notes first; tee up the crisis at the end without choosing it for them. Their next normal turn should pick a crisis option or custom response.
 - Narrate outcomes, diplomacy, tension, and optional movie picks in natural language.
 - Do NOT invent new stat totals in prose. The UI shows numbers from the database only.

@@ -13,9 +13,10 @@ function hasAssistantReply(messages: UIMessage[]): boolean {
 }
 
 export function normalizeNation(n: Nation): Nation {
+  const domesticScratch = n.domesticScratch ?? "";
   const forgeComplete = n.forgeComplete ?? true;
   if (forgeComplete) {
-    return { ...n, forgeComplete: true, forgeProgress: null };
+    return { ...n, domesticScratch, forgeComplete: true, forgeProgress: null };
   }
   const raw: NationForgeProgress =
     n.forgeProgress ??
@@ -31,6 +32,7 @@ export function normalizeNation(n: Nation): Nation {
   }
   return {
     ...n,
+    domesticScratch,
     forgeComplete: false,
     forgeProgress: {
       stepIndex: fp.stepIndex,
@@ -62,5 +64,9 @@ export function migrateSession(session: GameSession): GameSession {
     s = { ...s, phase: "nation_forge" };
   }
 
-  return { ...s, nations };
+  const diplomaticOutreach = Array.isArray(s.diplomaticOutreach)
+    ? s.diplomaticOutreach
+    : [];
+
+  return { ...s, nations, diplomaticOutreach };
 }
