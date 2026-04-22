@@ -20,6 +20,7 @@ import {
 } from "@/lib/nationforge/assistant-ui-prose";
 import { consumeGmTextStream } from "@/lib/nationforge/consume-gm-stream";
 import { buildOpeningBriefPlayerMessage } from "@/lib/nationforge/opening-brief-narrative";
+import { playerTurnChatDisplayBody } from "@/lib/nationforge/player-input";
 import type { PublicGameSession } from "@/lib/nationforge/public-types";
 import {
   MAX_DIPLOMACY_MESSAGE_LENGTH,
@@ -55,13 +56,6 @@ function StatRibbon({ nation }: { nation: Nation }) {
       ))}
     </div>
   );
-}
-
-/** Strip server POV prefix so the chat bubble shows only what the player wrote. */
-function displayPlayerChatBody(formattedTurnText: string): string {
-  const t = formattedTurnText.trim();
-  const stripped = t.replace(/^POV:\s*[^\n]+\n\n/, "").trim();
-  return stripped || t;
 }
 
 function userMessageTextParts(m: UIMessage): string {
@@ -936,7 +930,7 @@ export default function NationForgeBoard() {
                   }`;
                   if (m.role === "user") {
                     const raw = userMessageTextParts(m);
-                    const body = displayPlayerChatBody(raw);
+                    const body = playerTurnChatDisplayBody(raw);
                     if (!body.trim()) return null;
                     return (
                       <div key={messageKey} className="flex justify-end">

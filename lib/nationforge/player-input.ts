@@ -188,3 +188,29 @@ export function formatPlayerTurnMessage(
   }
   return lines.join("\n");
 }
+
+/**
+ * Text to show in the **You** chat bubble: player narrative only. The wire
+ * format from {@link formatPlayerTurnMessage} also appends GM-only lines
+ * (crisis id/prompt, diplomacy, etc.) — those stay in `gmMessages` for the model
+ * but must not be shown as if the player typed them.
+ */
+export function playerTurnChatDisplayBody(formattedTurnText: string): string {
+  let t = formattedTurnText.trim().replace(/^POV:\s*[^\n]+\n\n/, "").trim();
+  const appendStarts = [
+    `\n\n${OPENING_ORIENTATION_MARKER}`,
+    "\n\nCrisis choice:",
+    "\n\nCustom crisis response:",
+    "\n\nActive crisis (player answered in prose above):",
+    "\n\nPublic diplomacy:",
+    "\n\nSecret action:",
+    "\n\nRe-allocation notes:",
+  ];
+  let cut = Infinity;
+  for (const prefix of appendStarts) {
+    const i = t.indexOf(prefix);
+    if (i !== -1 && i < cut) cut = i;
+  }
+  if (cut < Infinity) t = t.slice(0, cut).trim();
+  return t || formattedTurnText.trim();
+}
