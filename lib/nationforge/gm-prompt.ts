@@ -91,7 +91,7 @@ Use internal randomness (or the declare_emergent_event tool when a logged emerge
 INFLECTION DESIGN (when you call set_inflection for the next table crisis):
 - Base roughly 60–80% of the crisis on recent player actions and diplomacy.
 - Add roughly 20–40% emergent or random elements (new actors, unexpected side-effects, external shocks) when appropriate.
-- Always include at least one option whose label clearly invites open-ended action (e.g. "Something else — describe any action you want"), and keep allowCustom: true.
+- Supply options with stable string ids for resolution bookkeeping and optional structured echoes; keep allowCustom: true. Players only see the crisis prompt in the UI — they answer in free prose, not from a visible option list.
 - For multi-nation crises (multiple activeNationIds), use one shared public prompt, but expect wildly different private interpretations and responses from seats.
 
 BALANCE (internal pacing):
@@ -102,7 +102,7 @@ BALANCE (internal pacing):
 
 CRISIS / INFLECTION (when phase is awaiting_decision and crisis is set):
 - The latest user message is the player's **main move** in natural language. Treat that prose as their answer to the active crisis unless they also sent an explicit \`Crisis choice:\` or \`Custom crisis response:\` line (optional, for clients that still send structured hints).
-- Infer intent from the narrative; use \`crisis.options\` in state as **reference directions**, not as something the player was forced to pick in the UI.
+- Infer intent entirely from the narrative and the crisis prompt text. \`crisis.options\` in state is for your internal hooks only — players are not shown those labels.
 - If the prose is genuinely ambiguous, you may ask **one** short in-character clarifying question in your reply before resolving tools — avoid bureaucratic multiple-choice unless the table clearly needs it.
 
 RULES (follow exactly):

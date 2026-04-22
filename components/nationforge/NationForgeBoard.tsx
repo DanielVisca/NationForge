@@ -978,8 +978,8 @@ export default function NationForgeBoard() {
                         Inflection
                       </p>
                       <p className="mt-1 text-xs text-amber-950/90 dark:text-amber-100/90">
-                        Reply in the message box below. Directions are hints, not
-                        required buttons:
+                        Describe what your nation does in the message box below —
+                        any coherent action is valid.
                       </p>
                       {crisisInvolvedNames.length > 0 ? (
                         <p className="mt-2 text-[11px] font-medium text-amber-900 dark:text-amber-200">
@@ -1005,16 +1005,6 @@ export default function NationForgeBoard() {
                           {crisis.prompt}
                         </p>
                       )}
-                      <ul className="mt-3 list-disc space-y-1 pl-4 text-xs text-zinc-700 dark:text-zinc-300">
-                        {crisis.options.map((o) => (
-                          <li key={o.id}>
-                            <span className="font-mono text-[10px] text-amber-800 dark:text-amber-300">
-                              {o.id}
-                            </span>{" "}
-                            {o.label}
-                          </li>
-                        ))}
-                      </ul>
                     </div>
                   </div>
                 ) : null}
