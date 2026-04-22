@@ -31,6 +31,8 @@ const HOST_TOKENS_KEY = "nationforge-host-tokens";
 let openingBeatAutoKeySent = "";
 /** Prevents parallel opening-brief POSTs from the same browser. */
 let openingBriefInFlight = false;
+/** After benign errors / 429, pause auto-retry briefly (do not use openingBeatAutoKeySent for that). */
+let openingBriefCooldownUntil = 0;
 
 const POLL_MS = 2500;
 const POLL_MS_GM_RUNNING = 650;
@@ -50,6 +52,8 @@ function isBenignGmBusyError(message: string): boolean {
   const m = message.toLowerCase();
   return (
     m.includes("already in the queue") ||
+    m.includes("already queued") ||
+    m.includes("send the opening twice") ||
     m.includes("opening or turn is already") ||
     m.includes("still writing") ||
     m.includes("still resolving") ||
@@ -564,15 +568,20 @@ export default function NationForgeBoard() {
       });
       if (res.status === 429) {
         const j = (await res.json()) as { retryAfterMs?: number };
-        throw new Error(
-          `Rate limited. Retry after ~${Math.ceil((j.retryAfterMs ?? 5000) / 1000)}s`,
+        const wait = Math.ceil((j.retryAfterMs ?? 8000) / 1000);
+        openingBriefCooldownUntil = Date.now() + (j.retryAfterMs ?? 8000);
+        await load();
+        setError(
+          `Rate limited — wait ~${wait}s. The opening will auto-retry after that (or refresh once).`,
         );
+        setGmStreamText("");
+        return;
       }
       if (!res.ok) {
         const errText = await readFetchErrorBody(res);
         if (isBenignGmBusyError(errText)) {
+          openingBriefCooldownUntil = Date.now() + 5000;
           await load();
-          openingBeatAutoKeySent = dedupeKey;
           setGmStreamText("");
           return;
         }
@@ -603,6 +612,7 @@ export default function NationForgeBoard() {
     }
     const dedupeKey = `${session.id}:${session.crisis.id}`;
     if (openingBeatAutoKeySent === dedupeKey) return;
+    if (Date.now() < openingBriefCooldownUntil) return;
     void (async () => {
       await Promise.resolve();
       await submitOpeningBrief();

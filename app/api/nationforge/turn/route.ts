@@ -11,6 +11,8 @@ import { createNationForgeTools } from "@/lib/nationforge/game-tools";
 import { buildGmSystemPrompt } from "@/lib/nationforge/gm-prompt";
 import {
   formatPlayerTurnMessage,
+  recoverStaleGmRunningPhase,
+  stripOrphanOpeningUserMessage,
   type PlayerTurnPayload,
   validatePlayerTurn,
 } from "@/lib/nationforge/player-input";
@@ -51,22 +53,32 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing sessionId" }, { status: 400 });
   }
 
+  const raw = await getGameSession(body.sessionId);
+  if (!raw) {
+    return NextResponse.json({ error: "Session not found" }, { status: 404 });
+  }
+
+  const cleaned = recoverStaleGmRunningPhase(stripOrphanOpeningUserMessage(raw));
+  if (
+    cleaned.gmMessages.length !== raw.gmMessages.length ||
+    cleaned.phase !== raw.phase
+  ) {
+    await saveGameSession(cleaned);
+  }
+
+  const session = cleaned;
+
+  const v = validatePlayerTurn(session, body);
+  if (!v.ok) {
+    return NextResponse.json({ error: v.error }, { status: 400 });
+  }
+
   const rl = rateLimitNationForgeTurn(ip, body.sessionId);
   if (!rl.ok) {
     return NextResponse.json(
       { error: "Rate limited", retryAfterMs: rl.retryAfterMs },
       { status: 429 },
     );
-  }
-
-  const session = await getGameSession(body.sessionId);
-  if (!session) {
-    return NextResponse.json({ error: "Session not found" }, { status: 404 });
-  }
-
-  const v = validatePlayerTurn(session, body);
-  if (!v.ok) {
-    return NextResponse.json({ error: v.error }, { status: 400 });
   }
 
   const userMessage: UIMessage = {
@@ -124,7 +136,22 @@ export async function POST(req: Request) {
 
   return result.toUIMessageStreamResponse({
     originalMessages: allMessages,
-    onFinish: async ({ messages }) => {
+    onFinish: async ({ messages, isAborted }) => {
+      if (isAborted) {
+        const s = await getGameSession(body.sessionId);
+        if (!s) return;
+        const msgs = [...s.gmMessages];
+        const last = msgs[msgs.length - 1];
+        if (last?.role === "user") {
+          msgs.pop();
+        }
+        await saveGameSession({
+          ...s,
+          gmMessages: msgs,
+          phase: s.crisis ? "awaiting_decision" : "player_input",
+        });
+        return;
+      }
       await replaceGmMessages(body.sessionId, messages);
       const steps = await result.steps;
       const newId = steps.at(-1)?.response?.id;

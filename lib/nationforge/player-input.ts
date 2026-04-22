@@ -22,6 +22,52 @@ function textFromAssistantMessage(m: UIMessage): string {
     .join("");
 }
 
+function textFromUserMessage(m: UIMessage): string {
+  if (m.role !== "user") return "";
+  return m.parts
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
+
+const OPENING_ORIENTATION_MARKER =
+  "(orientationRequest: first opening beat — crisis choice deferred)";
+
+/**
+ * If the last GM-thread message is an opening-brief user turn but no assistant
+ * prose ever landed, drop it so the client can resend (e.g. stream died).
+ */
+export function stripOrphanOpeningUserMessage(session: GameSession): GameSession {
+  if (session.phase !== "awaiting_decision" || !session.crisis) return session;
+  if (sessionHasGmStory(session)) return session;
+  const msgs = session.gmMessages;
+  if (msgs.length === 0) return session;
+  const last = msgs[msgs.length - 1]!;
+  if (last.role !== "user") return session;
+  const t = textFromUserMessage(last);
+  if (!t.includes(OPENING_ORIENTATION_MARKER)) return session;
+  return { ...session, gmMessages: msgs.slice(0, -1) };
+}
+
+const STALE_GM_RUNNING_MS = 3 * 60 * 1000;
+
+/** If gm_running never finished (no onFinish), roll back so the table can retry. */
+export function recoverStaleGmRunningPhase(session: GameSession): GameSession {
+  if (session.phase !== "gm_running") return session;
+  const age = Date.now() - Date.parse(session.updatedAt);
+  if (age < STALE_GM_RUNNING_MS) return session;
+  const msgs = [...session.gmMessages];
+  const last = msgs[msgs.length - 1];
+  if (last?.role === "user") {
+    msgs.pop();
+  }
+  return {
+    ...session,
+    gmMessages: msgs,
+    phase: session.crisis ? "awaiting_decision" : "player_input",
+  };
+}
+
 /** True once any assistant message in the GM thread has visible prose. */
 export function sessionHasGmStory(session: GameSession): boolean {
   for (let i = session.gmMessages.length - 1; i >= 0; i--) {
