@@ -12,6 +12,10 @@ import {
   useState,
 } from "react";
 
+import {
+  gmThreadHasAssistantDelivery,
+  lastAssistantTextProseFromMessages,
+} from "@/lib/nationforge/assistant-ui-prose";
 import { consumeGmTextStream } from "@/lib/nationforge/consume-gm-stream";
 import { buildOpeningBriefPlayerMessage } from "@/lib/nationforge/opening-brief-narrative";
 import type { PublicGameSession } from "@/lib/nationforge/public-types";
@@ -37,6 +41,18 @@ let openingBriefCooldownUntil = 0;
 const POLL_MS = 2500;
 const POLL_MS_GM_RUNNING = 650;
 
+function gmMessagesTailSummary(messages: UIMessage[] | undefined) {
+  if (!messages?.length) return { total: 0, tail: [] as unknown[] };
+  const tail = messages.slice(-5);
+  return {
+    total: messages.length,
+    tail: tail.map((m) => ({
+      role: m.role,
+      partTypes: (m.parts ?? []).map((p) => (p as { type?: string }).type),
+    })),
+  };
+}
+
 async function readFetchErrorBody(res: Response): Promise<string> {
   const t = await res.text();
   try {
@@ -61,22 +77,6 @@ function isBenignGmBusyError(message: string): boolean {
     m.includes("wait for the gm") ||
     m.includes("gm is still")
   );
-}
-
-function textFromAssistantMessage(m: UIMessage): string {
-  if (m.role !== "assistant") return "";
-  return m.parts
-    .filter((p): p is { type: "text"; text: string } => p.type === "text")
-    .map((p) => p.text)
-    .join("");
-}
-
-function lastAssistantStory(messages: UIMessage[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const t = textFromAssistantMessage(messages[i]!);
-    if (t.trim()) return t;
-  }
-  return "";
 }
 
 function mergeSeatToken(sessionId: string, nationId: string, token: string) {
@@ -143,6 +143,8 @@ export default function NationForgeBoard() {
   const [diplomacyError, setDiplomacyError] = useState<string | null>(null);
   const [replyDraftById, setReplyDraftById] = useState<Record<string, string>>({});
 
+  const debugPollNRef = useRef(0);
+
   const load = useCallback(async () => {
     const token = urlToken ?? "";
     const res = await fetch(
@@ -150,7 +152,66 @@ export default function NationForgeBoard() {
     );
     if (!res.ok) return;
     const data = (await res.json()) as PublicGameSession;
-    setSession(data);
+    // #region agent log
+    {
+      debugPollNRef.current += 1;
+      const n = debugPollNRef.current;
+      const lastText = lastAssistantTextProseFromMessages(data.gmMessages ?? []);
+      const beatDelivered = gmThreadHasAssistantDelivery(data.gmMessages);
+      const my = data.viewerNationId
+        ? data.nations.find((x) => x.id === data.viewerNationId)
+        : undefined;
+      const waitingOpen = Boolean(
+        urlToken &&
+          my?.forgeComplete &&
+          !data.gameStarted &&
+          data.nations.length > 0,
+      );
+      const introFromPoll = lastText.trim().length > 0 || beatDelivered;
+      const payload = {
+        sessionId: "48387d",
+        runId: "post-fix",
+        hypothesisId: "H1_H3_H4_H5",
+        location: "NationForgeBoard.tsx:load",
+        message: "session poll snapshot",
+        data: {
+          n,
+          nationforgeSessionId: data.id,
+          phase: data.phase,
+          gameStarted: data.gameStarted,
+          gmMsgTotal: data.gmMessages?.length ?? 0,
+          lastTextLen: lastText.length,
+          gmBeatDelivered: beatDelivered,
+          introFromPollOnly: introFromPoll,
+          crisis: Boolean(data.crisis),
+          nationsLen: data.nations.length,
+          rosterLen: data.nationRoster?.length ?? 0,
+          hasViewer: Boolean(data.viewerNationId),
+          activeNationId: data.activeNationId,
+          waitingForTableOpen: waitingOpen,
+          gmTail: gmMessagesTailSummary(data.gmMessages),
+        },
+        timestamp: Date.now(),
+      };
+      fetch(
+        "http://127.0.0.1:7711/ingest/ae23ea3c-0d7c-4b48-8c6c-33596b38e250",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "48387d",
+          },
+          body: JSON.stringify(payload),
+        },
+      ).catch(() => {});
+    }
+    // #endregion
+    setSession((prev) => {
+      if (prev && prev.id === data.id && prev.updatedAt === data.updatedAt) {
+        return prev;
+      }
+      return data;
+    });
     setPovNationId((prev) => {
       if (data.viewerNationId) return data.viewerNationId;
       if (prev) return prev;
@@ -169,13 +230,31 @@ export default function NationForgeBoard() {
     session?.phase === "gm_running" ? POLL_MS_GM_RUNNING : POLL_MS;
 
   useEffect(() => {
+    // #region agent log
+    fetch("http://127.0.0.1:7711/ingest/ae23ea3c-0d7c-4b48-8c6c-33596b38e250", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "48387d",
+      },
+      body: JSON.stringify({
+        sessionId: "48387d",
+        runId: "post-fix",
+        hypothesisId: "H2",
+        location: "NationForgeBoard.tsx:pollInterval",
+        message: "poll interval (re)scheduled",
+        data: { pollMs, phase: session?.phase ?? null },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     const t = setInterval(() => {
       startTransition(() => {
         void load();
       });
     }, pollMs);
     return () => clearInterval(t);
-  }, [load, pollMs]);
+  }, [load, pollMs, session?.phase]);
 
   const crisis = session?.crisis ?? null;
 
@@ -204,8 +283,13 @@ export default function NationForgeBoard() {
 
   const lastGmChapter = useMemo(() => {
     if (!session?.gmMessages?.length) return "";
-    return lastAssistantStory(session.gmMessages);
+    return lastAssistantTextProseFromMessages(session.gmMessages);
   }, [session]);
+
+  const gmBeatPersisted = useMemo(
+    () => gmThreadHasAssistantDelivery(session?.gmMessages),
+    [session?.gmMessages],
+  );
 
   const origin = useMemo(() => {
     if (typeof window === "undefined") return "";
@@ -273,9 +357,11 @@ export default function NationForgeBoard() {
       session.nations.length > 0,
   );
 
-  /** First GM prose exists (or we are mid-stream). */
+  /** First GM beat landed: chronicle text, live stream text, or completed GM tools. */
   const introDelivered = Boolean(
-    lastGmChapter.trim().length > 0 || gmStreamText.trim().length > 0,
+    lastGmChapter.trim().length > 0 ||
+      gmStreamText.trim().length > 0 ||
+      gmBeatPersisted,
   );
 
   const showTurnComposer = Boolean(
@@ -605,7 +691,13 @@ export default function NationForgeBoard() {
     if (!session || !urlToken || !myNation?.forgeComplete) return;
     if (waitingForTableOpen) return;
     if (!session.gameStarted || !session.crisis) return;
-    if (lastGmChapter.trim() || gmStreamText.trim()) return;
+    if (
+      lastGmChapter.trim() ||
+      gmStreamText.trim() ||
+      gmThreadHasAssistantDelivery(session.gmMessages)
+    ) {
+      return;
+    }
     if (session.phase === "gm_running") return;
     if (!session.viewerNationId || session.viewerNationId !== session.activeNationId) {
       return;
@@ -624,6 +716,7 @@ export default function NationForgeBoard() {
     waitingForTableOpen,
     lastGmChapter,
     gmStreamText,
+    session?.gmMessages,
     submitOpeningBrief,
   ]);
 

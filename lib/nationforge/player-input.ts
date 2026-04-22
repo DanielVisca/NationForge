@@ -1,5 +1,6 @@
 import type { UIMessage } from "ai";
 
+import { gmThreadHasAssistantDelivery } from "./assistant-ui-prose";
 import type { GameSession } from "./schema";
 
 export type PlayerTurnPayload = {
@@ -13,14 +14,6 @@ export type PlayerTurnPayload = {
   secretAction?: string;
   reallocNotes?: string;
 };
-
-function textFromAssistantMessage(m: UIMessage): string {
-  if (m.role !== "assistant") return "";
-  return m.parts
-    .filter((p): p is { type: "text"; text: string } => p.type === "text")
-    .map((p) => p.text)
-    .join("");
-}
 
 function textFromUserMessage(m: UIMessage): string {
   if (m.role !== "user") return "";
@@ -68,13 +61,9 @@ export function recoverStaleGmRunningPhase(session: GameSession): GameSession {
   };
 }
 
-/** True once any assistant message in the GM thread has visible prose. */
+/** True once any assistant message has chronicle text or a completed GM tool call. */
 export function sessionHasGmStory(session: GameSession): boolean {
-  for (let i = session.gmMessages.length - 1; i >= 0; i--) {
-    const t = textFromAssistantMessage(session.gmMessages[i]!);
-    if (t.trim()) return true;
-  }
-  return false;
+  return gmThreadHasAssistantDelivery(session.gmMessages);
 }
 
 export function validatePlayerTurn(
