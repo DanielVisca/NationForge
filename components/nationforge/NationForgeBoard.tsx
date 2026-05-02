@@ -52,6 +52,7 @@ import {
   STAT_KEYS,
   type DiplomaticOutreach,
   type Nation,
+  type NationStats,
   type StatImpactRecord,
   type StatKey,
 } from "@/lib/nationforge/schema";
@@ -114,39 +115,8 @@ function signedNumber(value: number): string {
   return String(value);
 }
 
-function aggregateLatestImpact(
-  impacts: StatImpactRecord[],
-  nationId: string,
-): StatImpactRecord | null {
-  const mine = impacts.filter((impact) => impact.nationId === nationId);
-  if (mine.length === 0) return null;
-  const latestRound = Math.max(...mine.map((impact) => impact.roundIndex));
-  const latest = mine.filter((impact) => impact.roundIndex === latestRound);
-  const deltas = Object.fromEntries(
-    STAT_KEYS.map((key) => [
-      key,
-      latest.reduce((sum, impact) => sum + (impact.deltas[key] ?? 0), 0),
-    ]).filter(([, value]) => value !== 0),
-  ) as Partial<Record<StatKey, number>>;
-  const reserveDelta = latest.reduce(
-    (sum, impact) => sum + impact.reserveDelta,
-    0,
-  );
-  const newest = latest.reduce((a, b) =>
-    Date.parse(a.at) >= Date.parse(b.at) ? a : b,
-  );
-  return {
-    id: newest.id,
-    at: newest.at,
-    roundIndex: latestRound,
-    nationId,
-    deltas,
-    reserveDelta,
-  };
-}
-
 function DeltaBadge({ value }: { value?: number }) {
-  if (!value) {
+  if (value == null || value === 0 || Number.isNaN(value)) {
     return (
       <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500">
         no change
@@ -167,67 +137,362 @@ function DeltaBadge({ value }: { value?: number }) {
   );
 }
 
-function NationStatsPanel({
+function formatImpactSummary(impact: StatImpactRecord): string {
+  const parts: string[] = [];
+  if (impact.reserveDelta != null && impact.reserveDelta !== 0) {
+    parts.push(`Reserve ${signedNumber(impact.reserveDelta)}`);
+  }
+  for (const k of STAT_KEYS) {
+    const d = impact.deltas[k];
+    if (d != null && d !== 0) parts.push(`${statLabel(k)} ${signedNumber(d)}`);
+  }
+  return parts.length ? parts.join(" · ") : "Numbers updated this beat.";
+}
+
+function finiteStatRound(roundIndex: number | undefined): number {
+  return typeof roundIndex === "number" && Number.isFinite(roundIndex)
+    ? roundIndex
+    : 0;
+}
+
+/** Avoid skipping poll payloads when updatedAt collides but stats/impacts moved. */
+function playSnapshotForPollDedupe(s: PublicGameSession): string {
+  const vid = s.viewerNationId;
+  const vn = vid ? s.nations.find((n) => n.id === vid) : undefined;
+  const statsKey =
+    vn != null
+      ? `${STAT_KEYS.map((k) => vn.stats[k]).join(",")};${vn.reserve}`
+      : "";
+  const impactsTail = (s.statImpacts ?? [])
+    .slice(-24)
+    .map((i) => `${i.id}:${i.nationId}:${finiteStatRound(i.roundIndex)}`)
+    .join(";");
+  const gm = s.gmMessages ?? [];
+  const gmRev = gm.length
+    ? `${gm.length}:${typeof gm.at(-1)?.id === "string" ? gm.at(-1)!.id : ""}`
+    : "0:";
+  return `${s.updatedAt}|${statsKey}|${impactsTail}|${gmRev}`;
+}
+
+function aggregateLatestImpact(
+  impacts: StatImpactRecord[],
+  nationId: string,
+  sessionRoundIndex?: number,
+): StatImpactRecord | null {
+  const mine = impacts.filter((impact) => impact.nationId === nationId);
+  if (mine.length === 0) return null;
+
+  const thisSessionRound =
+    typeof sessionRoundIndex === "number" &&
+    Number.isFinite(sessionRoundIndex)
+      ? mine.filter(
+          (impact) => finiteStatRound(impact.roundIndex) === sessionRoundIndex,
+        )
+      : [];
+
+  const maxRound = Math.max(...mine.map((i) => finiteStatRound(i.roundIndex)));
+  const latestRoundMine = mine.filter(
+    (impact) => finiteStatRound(impact.roundIndex) === maxRound,
+  );
+
+  const latest =
+    thisSessionRound.length > 0
+      ? thisSessionRound
+      : latestRoundMine.length > 0
+        ? latestRoundMine
+        : mine;
+
+  const deltas = Object.fromEntries(
+    STAT_KEYS.map((key) => [
+      key,
+      latest.reduce((sum, impact) => sum + (impact.deltas[key] ?? 0), 0),
+    ]).filter(([, value]) => value !== 0),
+  ) as Partial<Record<StatKey, number>>;
+  const reserveDelta = latest.reduce(
+    (sum, impact) => sum + (impact.reserveDelta ?? 0),
+    0,
+  );
+  const newest = latest.reduce((a, b) =>
+    Date.parse(a.at) >= Date.parse(b.at) ? a : b,
+  );
+  const displayRound =
+    thisSessionRound.length > 0
+      ? finiteStatRound(sessionRoundIndex)
+      : maxRound;
+  return {
+    id: newest.id,
+    at: newest.at,
+    roundIndex: displayRound,
+    nationId,
+    deltas,
+    reserveDelta,
+  };
+}
+
+/** Collapsible stat line + detail grid above the turn composer. */
+function ChatComposerStatsBanner({
   nation,
   latestImpact,
 }: {
   nation: Nation;
   latestImpact: StatImpactRecord | null;
 }) {
+  const collapsed = (
+    <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] leading-snug text-zinc-700 dark:text-zinc-200">
+      <span className="shrink-0">
+        <span className="font-medium text-zinc-500 dark:text-zinc-400">
+          Reserve{" "}
+        </span>
+        <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
+          {nation.reserve}
+        </span>
+      </span>
+      {STAT_KEYS.map((key) => (
+        <span key={key} className="shrink-0">
+          <span className="font-medium text-zinc-500 dark:text-zinc-400">
+            {statLabel(key)}{" "}
+          </span>
+          <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
+            {nation.stats[key]}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+
   return (
-    <section className="rounded-2xl border border-teal-200 bg-teal-50/70 p-4 shadow-sm dark:border-teal-900/50 dark:bg-teal-950/25">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-teal-800 dark:text-teal-200">
-            Your nation
-          </p>
-          <h2 className="mt-0.5 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-            {nation.name}
-          </h2>
-          <p className="mt-1 text-xs text-teal-900/75 dark:text-teal-100/75">
-            Current stats with the latest numeric impact from the GM.
-          </p>
-        </div>
-        <div className="rounded-xl border border-teal-200 bg-white/80 px-3 py-2 text-right dark:border-teal-900/50 dark:bg-zinc-950/70">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
-            Reserve
-          </p>
-          <p className="text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
-            {nation.reserve}
-          </p>
-          <DeltaBadge value={latestImpact?.reserveDelta} />
-        </div>
-      </div>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {STAT_KEYS.map((key) => (
-          <div
-            key={key}
-            className="rounded-xl border border-teal-100 bg-white/85 px-3 py-2 dark:border-teal-900/40 dark:bg-zinc-950/70"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                {statLabel(key)}
-              </p>
-              <DeltaBadge value={latestImpact?.deltas[key]} />
+    <details
+      className="nationforge-composer-stats group rounded-lg border border-zinc-200/90 bg-zinc-50/90 text-left dark:border-zinc-600 dark:bg-zinc-900/70"
+      aria-label={`${nation.name} — stats snapshot (expand for deltas)`}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1 [&::-webkit-details-marker]:hidden">
+        <svg
+          className="size-3 shrink-0 text-zinc-400 transition-transform group-open:rotate-90 dark:text-zinc-500"
+          viewBox="0 0 12 12"
+          fill="currentColor"
+          aria-hidden
+        >
+          <path d="M4 2 L9 6 L4 10 Z" />
+        </svg>
+        <div className="min-w-0 flex-1 leading-tight">{collapsed}</div>
+        <span className="shrink-0 text-[9px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+          Stats
+        </span>
+      </summary>
+      <div className="max-h-44 overflow-y-auto border-t border-zinc-200/80 px-2 py-2 dark:border-zinc-700/80">
+        <p className="mb-2 truncate text-[10px] font-semibold text-zinc-600 dark:text-zinc-300">
+          {nation.name}
+        </p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="rounded-md border border-zinc-200/80 bg-white/80 px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-950/60">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                Reserve
+              </span>
+              <DeltaBadge value={latestImpact?.reserveDelta} />
             </div>
-            <p className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
-              {nation.stats[key]}
+            <p className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
+              {nation.reserve}
             </p>
           </div>
-        ))}
+          {STAT_KEYS.map((key) => (
+            <div
+              key={key}
+              className="rounded-md border border-zinc-200/80 bg-white/80 px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-950/60"
+            >
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                  {statLabel(key)}
+                </span>
+                <DeltaBadge value={latestImpact?.deltas[key]} />
+              </div>
+              <p className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
+                {nation.stats[key]}
+              </p>
+            </div>
+          ))}
+        </div>
       </div>
-      {latestImpact ? (
-        <p className="mt-3 text-xs text-teal-900/75 dark:text-teal-100/75">
-          Latest numeric impact: round {latestImpact.roundIndex} ·{" "}
-          {new Date(latestImpact.at).toLocaleString()}
+    </details>
+  );
+}
+
+function nationIdentityFromBuildNotes(buildNotes: string): {
+  government: string | null;
+  summary: string;
+} {
+  const trimmed = buildNotes.trim();
+  if (!trimmed) {
+    return {
+      government: null,
+      summary:
+        "Finish the nation forge to lock in a public build profile the table and GM can read.",
+    };
+  }
+  const lines = trimmed.split("\n").map((l) => l.trim()).filter(Boolean);
+  const govLine = lines.find((l) => /^Government:/i.test(l));
+  const government = govLine
+    ? govLine.replace(/^Government:\s*/i, "").trim()
+    : null;
+  const econLine = lines.find((l) => /^Economy:/i.test(l));
+  const laborLine = lines.find((l) => /^Labor/i.test(l));
+  const milLine = lines.find((l) => /^Military:/i.test(l));
+  const econ = econLine?.replace(/^Economy:\s*/i, "").trim() ?? "";
+  const labor = laborLine?.replace(/^Labor[^:]*:\s*/i, "").trim() ?? "";
+  const military = milLine?.replace(/^Military:\s*/i, "").trim() ?? "";
+  const bits = [econ, labor, military].filter(Boolean);
+  const summary =
+    bits.join(" · ").slice(0, 320) ||
+    lines.slice(1, 5).join(" ").slice(0, 320);
+  return {
+    government,
+    summary: summary || "Nation forge picks are in Session reference.",
+  };
+}
+
+function PlayNationChatIdentity({ nation }: { nation: Nation }) {
+  const { government, summary } = nationIdentityFromBuildNotes(
+    nation.buildNotes ?? "",
+  );
+  return (
+    <div className="rounded-xl border border-zinc-200/85 bg-zinc-50/95 px-4 py-3 dark:border-zinc-600 dark:bg-zinc-900/75">
+      <h2 className="text-2xl font-bold tracking-tight text-zinc-950 dark:text-zinc-50">
+        {nation.name}
+      </h2>
+      {government ? (
+        <p className="mt-1.5 text-sm text-zinc-800 dark:text-zinc-100">
+          <span className="font-medium text-zinc-500 dark:text-zinc-400">
+            Government:{" "}
+          </span>
+          <span className="font-semibold text-violet-900 dark:text-violet-200">
+            {government}
+          </span>
         </p>
-      ) : (
-        <p className="mt-3 text-xs text-teal-900/70 dark:text-teal-100/70">
-          No numeric stat impact recorded yet. Narrative effects may still matter
-          before numbers move.
-        </p>
-      )}
-    </section>
+      ) : null}
+      <p className="mt-2 text-[11px] leading-relaxed text-zinc-600 line-clamp-4 dark:text-zinc-400">
+        {summary}
+      </p>
+    </div>
+  );
+}
+
+type StatDeltaFloat = { id: string; key: StatKey | "reserve"; delta: number };
+
+function StatMicroChip({
+  label,
+  short,
+  value,
+  floaters,
+}: {
+  label: string;
+  short: string;
+  value: number;
+  floaters: StatDeltaFloat[];
+}) {
+  return (
+    <div className="relative min-w-[3.25rem] flex-1 basis-[3.25rem] rounded-md border border-zinc-200/80 bg-white/90 px-1.5 pb-1 pt-1.5 text-center dark:border-zinc-700 dark:bg-zinc-950/55">
+      {floaters.map((t) => (
+        <span
+          key={t.id}
+          className={`nationforge-stat-delta-float pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2 whitespace-nowrap text-[10px] font-bold tabular-nums ${
+            t.delta > 0
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-red-600 dark:text-red-400"
+          }`}
+        >
+          {signedNumber(t.delta)}
+        </span>
+      ))}
+      <span
+        className="block truncate text-[8px] font-semibold uppercase tracking-wide text-zinc-400 capitalize dark:text-zinc-500"
+        title={label}
+      >
+        {short}
+      </span>
+      <span className="mt-0.5 block text-sm font-bold tabular-nums text-zinc-950 dark:text-zinc-50">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function PlayAnimatedStatStrip({ nation }: { nation: Nation }) {
+  const [floats, setFloats] = useState<StatDeltaFloat[]>([]);
+  const prevSnapRef = useRef<string | null>(null);
+
+  const snap = `${nation.reserve}|${STAT_KEYS.map((k) => nation.stats[k]).join("|")}`;
+
+  useEffect(() => {
+    const prev = prevSnapRef.current;
+    prevSnapRef.current = snap;
+    if (prev === null) return;
+    if (prev === snap) return;
+
+    const parseSnap = (s: string) => {
+      const parts = s.split("|").map(Number);
+      const reserve = parts[0] ?? 0;
+      const stats = Object.fromEntries(
+        STAT_KEYS.map((k, i) => [k, parts[i + 1] ?? 0]),
+      ) as NationStats;
+      return { reserve, stats };
+    };
+
+    const p = parseSnap(prev);
+    const n = parseSnap(snap);
+    const next: StatDeltaFloat[] = [];
+    if (p.reserve !== n.reserve) {
+      next.push({
+        id: `reserve-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        key: "reserve",
+        delta: n.reserve - p.reserve,
+      });
+    }
+    for (const k of STAT_KEYS) {
+      if (p.stats[k] !== n.stats[k]) {
+        next.push({
+          id: `${k}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          key: k,
+          delta: n.stats[k] - p.stats[k],
+        });
+      }
+    }
+    if (next.length === 0) return;
+
+    setFloats((f) => [...f, ...next]);
+    const timers = next.map((tok) =>
+      setTimeout(() => {
+        setFloats((f) => f.filter((x) => x.id !== tok.id));
+      }, 2000),
+    );
+    return () => {
+      for (const t of timers) clearTimeout(t);
+    };
+  }, [snap]);
+
+  const floatsFor = (key: StatKey | "reserve") =>
+    floats.filter((f) => f.key === key);
+
+  return (
+    <div
+      className="flex flex-wrap gap-1.5"
+      aria-label="Reserve and key stats — totals update when the GM applies changes"
+    >
+      <StatMicroChip
+        label="Reserve"
+        short="res"
+        value={nation.reserve}
+        floaters={floatsFor("reserve")}
+      />
+      {STAT_KEYS.map((k) => (
+        <StatMicroChip
+          key={k}
+          label={statLabel(k)}
+          short={k.slice(0, 3)}
+          value={nation.stats[k]}
+          floaters={floatsFor(k)}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -427,6 +692,14 @@ export default function NationForgeBoard() {
   }, [sessionId, resolvedUrlToken, router]);
 
   const [session, setSession] = useState<PublicGameSession | null>(null);
+  const sessionRef = useRef<PublicGameSession | null>(null);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+  const [sessionNotFound, setSessionNotFound] = useState(false);
+  const [sessionBootstrapError, setSessionBootstrapError] = useState<
+    string | null
+  >(null);
   const [hostTokens] = useState<Record<string, string> | null>(() =>
     readHostTokensForSession(sessionId),
   );
@@ -485,19 +758,68 @@ export default function NationForgeBoard() {
   const [diplomacyError, setDiplomacyError] = useState<string | null>(null);
   const [replyDraftById, setReplyDraftById] = useState<Record<string, string>>({});
 
+  const peerJoinForgedInitializedRef = useRef(false);
+  const peerJoinPrevForgedRef = useRef<Set<string>>(new Set());
+  const [peerJoinNotice, setPeerJoinNotice] = useState<{ name: string } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    peerJoinForgedInitializedRef.current = false;
+    peerJoinPrevForgedRef.current = new Set();
+    setPeerJoinNotice(null);
+    setSessionNotFound(false);
+    setSessionBootstrapError(null);
+  }, [sessionId]);
+
+  const lastSeenStatImpactIdRef = useRef<string | null | undefined>(undefined);
+  const [statPanelPulse, setStatPanelPulse] = useState(false);
+  const [impactBannerImpact, setImpactBannerImpact] =
+    useState<StatImpactRecord | null>(null);
+  const impactBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const load = useCallback(async () => {
     const token = seatToken ?? "";
-    const res = await fetch(
-      `/api/nationforge/sessions/${sessionId}${token ? `?token=${encodeURIComponent(token)}` : ""}`,
-    );
+    let res: Response;
+    try {
+      res = await fetch(
+        `/api/nationforge/sessions/${sessionId}${token ? `?token=${encodeURIComponent(token)}` : ""}`,
+        { cache: "no-store" },
+      );
+    } catch {
+      if (sessionRef.current == null) {
+        setSessionBootstrapError("Could not reach the server.");
+      }
+      return;
+    }
     if (res.status === 404) {
       clearNationForgeSeat(sessionId);
       setSeatTokenBridge(null);
       setSession(null);
+      setSessionNotFound(true);
+      setSessionBootstrapError(null);
       return;
     }
-    if (!res.ok) return;
-    const data = (await res.json()) as PublicGameSession;
+    if (!res.ok) {
+      if (sessionRef.current == null) {
+        setSessionBootstrapError(
+          `Session request failed (HTTP ${res.status}).`,
+        );
+      }
+      return;
+    }
+    let data: PublicGameSession;
+    try {
+      data = (await res.json()) as PublicGameSession;
+    } catch {
+      if (sessionRef.current == null) {
+        setSessionBootstrapError("Invalid response from server.");
+      }
+      return;
+    }
+    setSessionNotFound(false);
+    setSessionBootstrapError(null);
     if (token.trim() && data.viewerNationId == null) {
       clearNationForgeSeat(sessionId);
       setSavedSeat(null);
@@ -518,7 +840,13 @@ export default function NationForgeBoard() {
       });
     }
     setSession((prev) => {
-      if (prev && prev.id === data.id && prev.updatedAt === data.updatedAt) {
+      const prevSnap = prev ? playSnapshotForPollDedupe(prev) : null;
+      const nextSnap = playSnapshotForPollDedupe(data);
+      if (
+        prev &&
+        prev.id === data.id &&
+        prevSnap === nextSnap
+      ) {
         return prev;
       }
       return data;
@@ -539,6 +867,29 @@ export default function NationForgeBoard() {
 
   const pollMs =
     session?.phase === "gm_running" ? POLL_MS_GM_RUNNING : POLL_MS;
+
+  useEffect(() => {
+    if (!session?.gameStarted || !session.viewerNationId) return;
+    const forged = new Set(
+      session.nationRoster.filter((r) => r.forgeComplete).map((r) => r.id),
+    );
+    const prev = peerJoinPrevForgedRef.current;
+    if (peerJoinForgedInitializedRef.current) {
+      for (const id of forged) {
+        if (!prev.has(id) && id !== session.viewerNationId) {
+          const name =
+            session.nations.find((n) => n.id === id)?.name ??
+            session.nationRoster.find((r) => r.id === id)?.name ??
+            "Another nation";
+          setPeerJoinNotice({ name });
+          break;
+        }
+      }
+    } else {
+      peerJoinForgedInitializedRef.current = true;
+    }
+    peerJoinPrevForgedRef.current = forged;
+  }, [session]);
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -596,7 +947,11 @@ export default function NationForgeBoard() {
 
   const myLatestStatImpact = useMemo(() => {
     if (!session || !myNation) return null;
-    return aggregateLatestImpact(session.statImpacts, myNation.id);
+    return aggregateLatestImpact(
+      session.statImpacts,
+      myNation.id,
+      session.roundIndex,
+    );
   }, [session, myNation]);
 
   const otherNations = useMemo(() => {
@@ -711,6 +1066,10 @@ export default function NationForgeBoard() {
       myNation?.forgeComplete,
   );
 
+  const usePlayGrid = Boolean(
+    session?.gameStarted && introDelivered && myNation?.forgeComplete,
+  );
+
   const isOpeningBeatSeat = Boolean(
     session &&
       seatToken &&
@@ -722,6 +1081,53 @@ export default function NationForgeBoard() {
     session?.gameStarted &&
       (session.phase === "gm_running" || busy || gmStreamText.length > 0),
   );
+
+  useLayoutEffect(() => {
+    lastSeenStatImpactIdRef.current = undefined;
+  }, [sessionId]);
+
+  useEffect(() => {
+    return () => {
+      if (impactBannerTimerRef.current) {
+        clearTimeout(impactBannerTimerRef.current);
+        impactBannerTimerRef.current = null;
+      }
+      if (statPulseTimerRef.current) {
+        clearTimeout(statPulseTimerRef.current);
+        statPulseTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session?.gameStarted || !myNation?.forgeComplete) return;
+    const impact = myLatestStatImpact;
+    const id = impact?.id ?? null;
+    if (lastSeenStatImpactIdRef.current === undefined) {
+      lastSeenStatImpactIdRef.current = id;
+      return;
+    }
+    if (id !== null && id !== lastSeenStatImpactIdRef.current) {
+      lastSeenStatImpactIdRef.current = id;
+      setStatPanelPulse(true);
+      setImpactBannerImpact(impact);
+      if (statPulseTimerRef.current) clearTimeout(statPulseTimerRef.current);
+      statPulseTimerRef.current = setTimeout(() => {
+        setStatPanelPulse(false);
+        statPulseTimerRef.current = null;
+      }, 2200);
+      if (impactBannerTimerRef.current) clearTimeout(impactBannerTimerRef.current);
+      impactBannerTimerRef.current = setTimeout(() => {
+        setImpactBannerImpact(null);
+        impactBannerTimerRef.current = null;
+      }, 12000);
+    }
+  }, [
+    session?.gameStarted,
+    myNation?.forgeComplete,
+    myLatestStatImpact?.id,
+    myLatestStatImpact,
+  ]);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -1131,6 +1537,46 @@ export default function NationForgeBoard() {
     submitOpeningBrief,
   ]);
 
+  if (sessionNotFound) {
+    return (
+      <div className="mx-auto max-w-lg p-8 text-center text-sm text-zinc-600 dark:text-zinc-400">
+        <p>This session no longer exists or the link is invalid.</p>
+        <Link
+          href="/nationforge"
+          className="mt-4 inline-block text-blue-600 underline dark:text-blue-400"
+        >
+          All sessions
+        </Link>
+      </div>
+    );
+  }
+
+  if (sessionBootstrapError && !session) {
+    return (
+      <div className="mx-auto max-w-lg p-8 text-center text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="text-red-600 dark:text-red-400">{sessionBootstrapError}</p>
+        <button
+          type="button"
+          className="mt-4 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200"
+          onClick={() => {
+            setSessionBootstrapError(null);
+            void load();
+          }}
+        >
+          Retry
+        </button>
+        <div className="mt-4">
+          <Link
+            href="/nationforge"
+            className="text-blue-600 underline dark:text-blue-400"
+          >
+            All sessions
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (!session) {
     return <div className="p-8 text-center text-sm text-zinc-500">Loading…</div>;
   }
@@ -1166,8 +1612,16 @@ export default function NationForgeBoard() {
     seatToken && session.viewerNationId && myNation?.forgeComplete,
   );
 
+  const statPulseWrapClass = statPanelPulse
+    ? "rounded-2xl ring-4 ring-teal-400/90 ring-offset-2 ring-offset-zinc-50 transition-shadow duration-300 dark:ring-offset-zinc-950"
+    : "rounded-2xl transition-shadow duration-300";
+
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
+    <div
+      className={`mx-auto px-4 py-8 ${
+        usePlayGrid ? "max-w-6xl space-y-4" : "max-w-3xl space-y-6"
+      }`}
+    >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link href="/nationforge" className="text-xs text-blue-600 underline">
@@ -1300,24 +1754,24 @@ export default function NationForgeBoard() {
         </div>
       ) : null}
 
-      {session.gameStarted &&
-      !waitingForTableOpen &&
-      myNation?.forgeComplete ? (
-        <NationStatsPanel
-          nation={myNation}
-          latestImpact={myLatestStatImpact}
-        />
-      ) : null}
+      {(() => {
+        const timelineEl =
+          session.gameStarted && !waitingForTableOpen && introDelivered ? (
+            <NationForgeTimeline
+              turnLog={session.turnLog}
+              emergentEvents={session.emergentEvents}
+              roundIndex={session.roundIndex}
+            />
+          ) : null;
 
-      {session.gameStarted && !waitingForTableOpen && introDelivered ? (
-        <NationForgeTimeline
-          turnLog={session.turnLog}
-          emergentEvents={session.emergentEvents}
-          roundIndex={session.roundIndex}
-        />
-      ) : null}
-
-      <div className="space-y-6">
+        const playStackInner = (
+          <div
+            className={
+              usePlayGrid
+                ? "flex min-h-0 flex-1 flex-col space-y-6"
+                : "space-y-6"
+            }
+          >
           {session.gameStarted &&
       !waitingForTableOpen &&
       crisis &&
@@ -1374,34 +1828,59 @@ export default function NationForgeBoard() {
       ) : null}
 
           {session.gameStarted && !waitingForTableOpen && introDelivered ? (
-            <section className="flex min-h-[min(82vh,900px)] flex-col gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/90">
+            <section
+              className={`aetheria-chat flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/90 ${
+                usePlayGrid
+                  ? "min-h-0 flex-1 flex-col xl:h-full xl:min-h-0"
+                  : "max-h-[min(78dvh,720px)] min-h-0 flex-col"
+              }`}
+            >
               <h2 className="sr-only">NationForge chat</h2>
-              <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
+              {peerJoinNotice ? (
+                <div
+                  className="rounded-lg border border-sky-200 bg-sky-50/95 px-3 py-2 text-sm text-sky-950 dark:border-sky-900/50 dark:bg-sky-950/35 dark:text-sky-100"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <p>
+                      <span className="font-medium">{peerJoinNotice.name}</span>{" "}
+                      finished the forge and joins the table. Check{" "}
+                      <span className="font-medium">Session reference</span> for
+                      their public profile and briefing.
+                    </p>
+                    <button
+                      type="button"
+                      className="shrink-0 text-xs font-medium text-sky-800 underline dark:text-sky-200"
+                      onClick={() => setPeerJoinNotice(null)}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              <div className="nationforge-chat-ribbon space-y-2">
                 {seatPovLocked && myNation ? (
-                  <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                    Playing as{" "}
-                    <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-                      {myNation.name}
-                    </span>
-                    <span className="ml-2 text-zinc-400">
-                      You see public table history plus your own private notes and
-                      secrets.
-                    </span>
-                  </p>
+                  <div className={`${statPulseWrapClass} space-y-2`}>
+                    <PlayNationChatIdentity nation={myNation} />
+                    <PlayAnimatedStatStrip nation={myNation} />
+                  </div>
                 ) : (
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
-                      Spectating public table
-                    </p>
-                    <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                      You can read public GM history, public timeline events, and
-                      known nation summaries. Join with a seat token to see one
-                      nation&apos;s private state and send moves.
-                    </p>
+                  <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
+                        Spectating public table
+                      </p>
+                      <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                        You can read public GM history, public timeline events, and
+                        known nation summaries. Join with a seat token to see one
+                        nation&apos;s private state and send moves.
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200/80 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
+              <div className="nationforge-chat-tts flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200/80 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
                 <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-700 dark:text-zinc-200">
                   <input
                     type="checkbox"
@@ -1448,8 +1927,42 @@ export default function NationForgeBoard() {
                   </span>
                 ) : null}
               </div>
+              {impactBannerImpact ? (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                  className="nationforge-chat-impact rounded-lg border border-teal-400/80 bg-teal-50 px-3 py-2 dark:border-teal-700 dark:bg-teal-950/50"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-teal-900 dark:text-teal-100">
+                        Stats updated this beat
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-800 dark:text-zinc-200">
+                        {formatImpactSummary(impactBannerImpact)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="shrink-0 text-xs font-medium text-teal-800 underline dark:text-teal-200"
+                      onClick={() => {
+                        if (impactBannerTimerRef.current) {
+                          clearTimeout(impactBannerTimerRef.current);
+                          impactBannerTimerRef.current = null;
+                        }
+                        setImpactBannerImpact(null);
+                      }}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div
-                className="min-h-[260px] flex-1 space-y-3 overflow-y-auto rounded-xl border border-zinc-200/80 bg-zinc-50/90 p-3 dark:border-zinc-700 dark:bg-zinc-900/50"
+                className={`flex-1 space-y-3 overflow-y-auto rounded-xl border border-zinc-200/80 bg-zinc-50/90 p-3 dark:border-zinc-700 dark:bg-zinc-900/50 ${
+                  usePlayGrid ? "min-h-0" : "min-h-[260px]"
+                }`}
                 role="log"
               >
                 {session.gmMessages.length === 0 ? (
@@ -1469,7 +1982,10 @@ export default function NationForgeBoard() {
                     if (!body.trim()) return null;
                     return (
                       <div key={messageKey} className="flex justify-end">
-                        <div className="max-w-[92%] rounded-2xl border border-zinc-200 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-zinc-600 dark:bg-zinc-950">
+                        <div
+                          data-chat-role="user"
+                          className="max-w-[92%] rounded-2xl border border-zinc-200 bg-white px-4 py-2.5 text-sm shadow-sm dark:border-zinc-600 dark:bg-zinc-950"
+                        >
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
                             You
                           </p>
@@ -1486,7 +2002,10 @@ export default function NationForgeBoard() {
                     if (!prose.trim() && !delivered) return null;
                     return (
                       <div key={messageKey} className="flex justify-start">
-                        <div className="max-w-[92%] rounded-2xl border border-violet-200/90 bg-violet-50/70 px-4 py-2.5 text-sm dark:border-violet-800/50 dark:bg-violet-950/35">
+                        <div
+                          data-chat-role="gm"
+                          className="max-w-[92%] rounded-2xl border border-violet-200/90 bg-violet-50/70 px-4 py-2.5 text-sm dark:border-violet-800/50 dark:bg-violet-950/35"
+                        >
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-800 dark:text-violet-200">
                             GM
                           </p>
@@ -1507,7 +2026,10 @@ export default function NationForgeBoard() {
                 })}
                 {gmComposing ? (
                   <div className="flex justify-start">
-                    <div className="max-w-[92%] rounded-2xl border border-sky-200 bg-sky-50/90 px-4 py-3 text-sm dark:border-sky-800/60 dark:bg-sky-950/40">
+                    <div
+                      data-chat-role="gm-stream"
+                      className="max-w-[92%] rounded-2xl border border-sky-200 bg-sky-50/90 px-4 py-3 text-sm dark:border-sky-800/60 dark:bg-sky-950/40"
+                    >
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-sky-900 dark:text-sky-200">
                         GM · writing
                       </p>
@@ -1529,6 +2051,12 @@ export default function NationForgeBoard() {
 
               {showTurnComposer ? (
                 <div className="sticky bottom-0 space-y-3 border-t border-zinc-200 bg-white/95 pt-3 backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95">
+                  {myNation ? (
+                    <ChatComposerStatsBanner
+                      nation={myNation}
+                      latestImpact={myLatestStatImpact}
+                    />
+                  ) : null}
                   <div>
                     <label
                       htmlFor="nationforge-chat-message"
@@ -1598,8 +2126,13 @@ export default function NationForgeBoard() {
 
           <details className="rounded-xl border border-zinc-200 dark:border-zinc-700">
             <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              Session reference (notebook, log, secrets, roster, diplomacy)
+              Session reference &amp; global affairs
             </summary>
+            <p className="border-b border-zinc-100 px-4 py-2 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+              Global affairs: public beats, shocks, roster, diplomacy, and other
+              seats&apos; profiles — separate from your nation&apos;s private GM
+              chat transcript.
+            </p>
             <div className="space-y-6 border-t border-zinc-100 p-4 dark:border-zinc-800">
               {seatToken && myNation?.forgeComplete ? (
                 <section className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
@@ -1800,6 +2333,27 @@ export default function NationForgeBoard() {
                   </ul>
                 </section>
               ) : null}
+              {session.gameStarted &&
+              session.viewerNationId &&
+              session.nations.some(
+                (n) => n.forgeComplete && n.id !== session.viewerNationId,
+              ) ? (
+                <section>
+                  <h3 className="mb-2 text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+                    Other forged seats (global view)
+                  </h3>
+                  <div className="space-y-3">
+                    {session.nations
+                      .filter(
+                        (n) =>
+                          n.forgeComplete && n.id !== session.viewerNationId,
+                      )
+                      .map((n) => (
+                        <NationCard key={n.id} nation={n} compact />
+                      ))}
+                  </div>
+                </section>
+              ) : null}
               {seatToken && myNation?.forgeComplete ? (
                 <section className="rounded-lg border border-indigo-200/90 bg-indigo-50/70 p-3 dark:border-indigo-900/40 dark:bg-indigo-950/35">
                   <div className="flex items-center gap-2">
@@ -1956,7 +2510,29 @@ export default function NationForgeBoard() {
               ) : null}
             </div>
           </details>
-      </div>
+          </div>
+        );
+
+        if (usePlayGrid) {
+          return (
+            <div className="xl:grid xl:grid-cols-[minmax(220px,260px)_minmax(0,1fr)] xl:gap-4 xl:items-stretch xl:min-h-[calc(100dvh-11rem)] xl:max-h-[calc(100dvh-11rem)]">
+              <aside className="flex min-h-0 max-h-full flex-col gap-4 overflow-y-auto">
+                {timelineEl}
+              </aside>
+              <main className="flex min-h-0 min-w-0 max-h-full flex-col overflow-y-auto">
+                {playStackInner}
+              </main>
+            </div>
+          );
+        }
+
+        return (
+          <>
+            {timelineEl}
+            {playStackInner}
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -2017,6 +2593,16 @@ function NationCard({
             {nation.buildNotes}
           </p>
         </>
+      ) : null}
+      {nation.forgeBriefingMarkdown?.trim() ? (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs font-medium text-indigo-600 dark:text-indigo-400">
+            Forge briefing (Markdown)
+          </summary>
+          <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-zinc-200/80 bg-white/90 p-2 dark:border-zinc-700 dark:bg-zinc-950/80">
+            <NationForgeChatMarkdown source={nation.forgeBriefingMarkdown} />
+          </div>
+        </details>
       ) : null}
     </div>
   );

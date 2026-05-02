@@ -10,9 +10,12 @@ import type {
   PublicEmergentEvent,
   PublicGameSession,
   PublicSecret,
+  PublicTurnLogEntry,
 } from "./public-types";
 import { STAT_KEYS } from "./schema";
 import { migrateSession } from "./session-migrate";
+import { playerTurnChatDisplayBody } from "./player-input";
+import type { NationForgeSessionSummary } from "./session-summary";
 
 type StoreFile = {
   sessions: Record<string, GameSession>;
@@ -23,6 +26,66 @@ type StoreFile = {
 const DATA_DIR = path.join(process.cwd(), ".data");
 const STORE_PATH = path.join(DATA_DIR, "nationforge-sessions.json");
 const MAX_NATIONS_PER_SESSION = 12;
+
+const COMPLETED_TOOL_STATES = new Set(["output-available", "output-error"]);
+const PUBLIC_GM_TOOL_PARTS = new Set([
+  "tool-append_turn_log",
+  "tool-apply_stat_deltas",
+  "tool-no_stat_change_this_turn",
+  "tool-declare_emergent_event",
+]);
+
+function publicTextFromUiMessage(message: UIMessage): string {
+  return message.parts
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
+
+function sanitizeGmMessageForClient(message: UIMessage): UIMessage | null {
+  if (message.role === "user") {
+    const publicBody = playerTurnChatDisplayBody(publicTextFromUiMessage(message));
+    if (!publicBody.trim()) return null;
+    return {
+      id: message.id,
+      role: "user",
+      parts: [{ type: "text", text: publicBody }],
+    };
+  }
+
+  if (message.role !== "assistant") return null;
+
+  const parts: UIMessage["parts"] = [];
+  for (const part of message.parts) {
+    if (part.type === "text") {
+      parts.push(part);
+      continue;
+    }
+
+    const state = (part as { state?: string }).state;
+    if (
+      PUBLIC_GM_TOOL_PARTS.has(part.type) &&
+      state &&
+      COMPLETED_TOOL_STATES.has(state)
+    ) {
+      parts.push({ type: part.type, state } as UIMessage["parts"][number]);
+    }
+  }
+
+  return parts.length > 0
+    ? {
+        id: message.id,
+        role: "assistant",
+        parts,
+      }
+    : null;
+}
+
+function sanitizeGmMessagesForClient(messages: UIMessage[]): UIMessage[] {
+  return messages
+    .map(sanitizeGmMessageForClient)
+    .filter((message): message is UIMessage => Boolean(message));
+}
 
 function defaultStats(): NationStats {
   return Object.fromEntries(STAT_KEYS.map((k) => [k, 50])) as NationStats;
@@ -73,9 +136,11 @@ export async function createGameSession(): Promise<GameSession> {
     turnLog: [],
     secrets: [],
     seatTokens: {},
-    gmMessages: [],
+    gmMessagesByNationId: {},
     diplomaticOutreach: [],
     emergentEvents: [],
+    statImpacts: [],
+    tableEvents: [],
   };
   store.sessions[id] = session;
   store.roomIndex[roomCode] = id;
@@ -125,6 +190,10 @@ export async function registerNation(
     ...session,
     nations: [...session.nations, nation],
     seatTokens: { ...session.seatTokens, [nationId]: token },
+    gmMessagesByNationId: {
+      ...session.gmMessagesByNationId,
+      [nationId]: [],
+    },
     phase:
       session.phase === "lobby"
         ? "nation_forge"
@@ -271,12 +340,33 @@ export function filterSessionForClient(
     },
   );
 
+  const turnLog: PublicTurnLogEntry[] = s.turnLog.map((entry) => ({
+    id: entry.id,
+    at: entry.at,
+    povNationId: entry.povNationId,
+    publicSummary: entry.publicSummary,
+    privateText:
+      effectiveViewer && entry.privateByNation
+        ? entry.privateByNation[effectiveViewer]
+        : undefined,
+  }));
+
+  const viewerThread =
+    effectiveViewer && s.gmMessagesByNationId[effectiveViewer]
+      ? s.gmMessagesByNationId[effectiveViewer]!
+      : [];
+
   const {
     seatTokens,
     secrets: _sessionSecrets,
     nations: _n,
     diplomaticOutreach: _allOutreach,
     emergentEvents: _emergentRaw,
+    turnLog: _turnLogRaw,
+    gmMessagesByNationId: _gmByNation,
+    lastGmResponseIdByNationId: _lastGmBy,
+    gmMessages: _gmLegacy,
+    lastGmResponseId: _lastGmLegacy,
     ...rest
   } = s;
   void seatTokens;
@@ -284,11 +374,18 @@ export function filterSessionForClient(
   void _n;
   void _allOutreach;
   void _emergentRaw;
+  void _turnLogRaw;
+  void _gmByNation;
+  void _lastGmBy;
+  void _gmLegacy;
+  void _lastGmLegacy;
   return {
     ...rest,
     nations,
     nationRoster,
     secrets,
+    turnLog,
+    gmMessages: sanitizeGmMessagesForClient(viewerThread),
     diplomaticOutreach,
     emergentEvents,
     viewerNationId: effectiveViewer,
@@ -302,20 +399,56 @@ export async function listGameSessions(): Promise<GameSession[]> {
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
 
-export async function appendGmMessage(
-  sessionId: string,
-  message: UIMessage,
-): Promise<void> {
-  await updateGameSession(sessionId, (sess) => {
-    sess.gmMessages = [...sess.gmMessages, message];
+/** Public list rows for the lobby / “My games” UI (same shape as GET /api/nationforge/sessions). */
+export async function listNationForgeSessionSummaries(): Promise<
+  NationForgeSessionSummary[]
+> {
+  const sessions = await listGameSessions();
+  return sessions.map((s) => {
+    const activeNation = s.nations.find((n) => n.id === s.activeNationId);
+    return {
+      id: s.id,
+      roomCode: s.roomCode,
+      updatedAt: s.updatedAt,
+      roundIndex: s.roundIndex,
+      phase: s.phase,
+      gameStarted: s.gameStarted,
+      activeNationId: s.activeNationId || null,
+      activeNationName: activeNation?.name ?? null,
+      nationNames: s.nations.filter((n) => n.forgeComplete).map((n) => n.name),
+      nationRoster: s.nations.map((n) => ({
+        id: n.id,
+        name: n.name,
+        forgeComplete: Boolean(n.forgeComplete),
+      })),
+      nationsInForge: s.nations.filter((n) => !n.forgeComplete).length,
+    };
   });
 }
 
-export async function replaceGmMessages(
+export async function appendGmMessage(
   sessionId: string,
+  nationId: string,
+  message: UIMessage,
+): Promise<void> {
+  await updateGameSession(sessionId, (sess) => {
+    const cur = sess.gmMessagesByNationId[nationId] ?? [];
+    sess.gmMessagesByNationId = {
+      ...sess.gmMessagesByNationId,
+      [nationId]: [...cur, message],
+    };
+  });
+}
+
+export async function replaceNationGmMessages(
+  sessionId: string,
+  nationId: string,
   messages: UIMessage[],
 ): Promise<void> {
   await updateGameSession(sessionId, (sess) => {
-    sess.gmMessages = messages;
+    sess.gmMessagesByNationId = {
+      ...sess.gmMessagesByNationId,
+      [nationId]: messages,
+    };
   });
 }
