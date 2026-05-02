@@ -22,6 +22,7 @@ import {
 import { rateLimitNationForgeTurn } from "@/lib/nationforge/rate-limit";
 import { sliceFromLastUser } from "@/lib/nationforge/slice-messages";
 import { getNationGmMessages } from "@/lib/nationforge/gm-threads";
+import type { GameSession } from "@/lib/nationforge/schema";
 import {
   getGameSession,
   mutateSessionExclusive,
@@ -31,6 +32,21 @@ import {
 import { defaultModelId, requireXaiApiKey, xai } from "@/lib/xai";
 
 export const maxDuration = 300;
+
+/** Remove pov from in-flight GM list; phase gm_running only while any seat still streams. */
+function nationFinishesGmStream(session: GameSession, povId: string): GameSession {
+  const ids = (session.gmStreamingNationIds ?? []).filter((id) => id !== povId);
+  return {
+    ...session,
+    gmStreamingNationIds: ids,
+    phase:
+      ids.length > 0
+        ? "gm_running"
+        : session.crisis
+          ? "awaiting_decision"
+          : "player_input",
+  };
+}
 
 const GM_MAX_OUTPUT_TOKENS = 5500;
 const GM_CONTINUATION_MAX_OUTPUT_TOKENS = 1200;
@@ -193,6 +209,10 @@ export async function POST(req: Request) {
       };
     }
     const allMessages: UIMessage[] = [...getNationGmMessages(s, pov), userMessage];
+    const streamIds = [...(s.gmStreamingNationIds ?? [])];
+    if (!streamIds.includes(pov)) {
+      streamIds.push(pov);
+    }
     return {
       ok: true,
       session: {
@@ -203,6 +223,7 @@ export async function POST(req: Request) {
           [pov]: allMessages,
         },
         activeNationId: pov,
+        gmStreamingNationIds: streamIds,
         phase: "gm_running",
       },
     };
@@ -218,7 +239,7 @@ export async function POST(req: Request) {
   const queued = enqueueResult.session;
   const allMessages = getNationGmMessages(queued, pov);
 
-  const tools = createNationForgeTools(body.sessionId);
+  const tools = createNationForgeTools(body.sessionId, pov);
   const lastResponseId =
     queued.lastGmResponseIdByNationId?.[pov] ?? queued.lastGmResponseId;
   const usePreviousResponse = Boolean(lastResponseId);
@@ -270,11 +291,11 @@ export async function POST(req: Request) {
         if (last?.role === "user") {
           msgs.pop();
         }
-        await saveGameSession({
+        const patched = {
           ...s,
           gmMessagesByNationId: { ...s.gmMessagesByNationId, [pov]: msgs },
-          phase: s.crisis ? "awaiting_decision" : "player_input",
-        });
+        };
+        await saveGameSession(nationFinishesGmStream(patched, pov));
         return;
       }
       const steps = await result.steps;
@@ -292,14 +313,18 @@ export async function POST(req: Request) {
       const newId = steps.at(-1)?.response?.id;
       const s = await getGameSession(body.sessionId);
       if (!s) return;
-      await saveGameSession({
-        ...s,
-        lastGmResponseIdByNationId: {
-          ...(s.lastGmResponseIdByNationId ?? {}),
-          [pov]: newId,
-        },
-        phase: s.crisis ? "awaiting_decision" : "player_input",
-      });
+      await saveGameSession(
+        nationFinishesGmStream(
+          {
+            ...s,
+            lastGmResponseIdByNationId: {
+              ...(s.lastGmResponseIdByNationId ?? {}),
+              [pov]: newId,
+            },
+          },
+          pov,
+        ),
+      );
     },
   });
 }

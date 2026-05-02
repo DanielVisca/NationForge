@@ -1,6 +1,7 @@
 import type { UIMessage } from "ai";
 
 import { gmThreadHasAssistantDelivery } from "./assistant-ui-prose";
+import { getNationGmMessages, withNationGmMessages } from "./gm-threads";
 import type { GameSession } from "./schema";
 
 export type PlayerTurnPayload = {
@@ -31,39 +32,86 @@ const OPENING_ORIENTATION_MARKER =
  * prose ever landed, drop it so the client can resend (e.g. stream died).
  */
 export function stripOrphanOpeningUserMessage(session: GameSession): GameSession {
-  if (session.phase !== "awaiting_decision" || !session.crisis) return session;
-  if (sessionHasGmStory(session)) return session;
-  const msgs = session.gmMessages;
-  if (msgs.length === 0) return session;
-  const last = msgs[msgs.length - 1]!;
-  if (last.role !== "user") return session;
-  const t = textFromUserMessage(last);
-  if (!t.includes(OPENING_ORIENTATION_MARKER)) return session;
-  return { ...session, gmMessages: msgs.slice(0, -1) };
+  if (!session.crisis) return session;
+  const streaming = session.gmStreamingNationIds ?? [];
+  let next = session;
+  let changed = false;
+  for (const n of session.nations) {
+    if (streaming.includes(n.id)) continue;
+    if (sessionHasGmStoryForNation(next, n.id)) continue;
+    const msgs = getNationGmMessages(next, n.id);
+    if (msgs.length === 0) continue;
+    const last = msgs[msgs.length - 1]!;
+    if (last.role !== "user") continue;
+    const t = textFromUserMessage(last);
+    if (!t.includes(OPENING_ORIENTATION_MARKER)) continue;
+    next = withNationGmMessages(next, n.id, msgs.slice(0, -1));
+    changed = true;
+  }
+  return changed ? next : session;
 }
 
 const STALE_GM_RUNNING_MS = 3 * 60 * 1000;
 
-/** If gm_running never finished (no onFinish), roll back so the table can retry. */
+/** If GM streams never finished (no onFinish), roll back queued user rows and clear streaming ids. */
 export function recoverStaleGmRunningPhase(session: GameSession): GameSession {
-  if (session.phase !== "gm_running") return session;
+  const streaming = session.gmStreamingNationIds ?? [];
+  if (streaming.length === 0) {
+    if (session.phase !== "gm_running") return session;
+    const ageLegacy = Date.now() - Date.parse(session.updatedAt);
+    if (ageLegacy < STALE_GM_RUNNING_MS) return session;
+    const nid = session.activeNationId?.trim();
+    if (!nid) {
+      return {
+        ...session,
+        phase: session.crisis ? "awaiting_decision" : "player_input",
+        gmStreamingNationIds: [],
+      };
+    }
+    const msgs = [...getNationGmMessages(session, nid)];
+    const last = msgs[msgs.length - 1];
+    if (last?.role === "user") {
+      msgs.pop();
+    }
+    return {
+      ...withNationGmMessages(session, nid, msgs),
+      phase: session.crisis ? "awaiting_decision" : "player_input",
+      gmStreamingNationIds: [],
+    };
+  }
+
   const age = Date.now() - Date.parse(session.updatedAt);
   if (age < STALE_GM_RUNNING_MS) return session;
-  const msgs = [...session.gmMessages];
-  const last = msgs[msgs.length - 1];
-  if (last?.role === "user") {
-    msgs.pop();
+
+  let next: GameSession = session;
+  for (const nid of streaming) {
+    const msgs = [...getNationGmMessages(next, nid)];
+    const last = msgs[msgs.length - 1];
+    if (last?.role === "user") {
+      msgs.pop();
+    }
+    next = withNationGmMessages(next, nid, msgs);
   }
   return {
-    ...session,
-    gmMessages: msgs,
-    phase: session.crisis ? "awaiting_decision" : "player_input",
+    ...next,
+    gmStreamingNationIds: [],
+    phase: next.crisis ? "awaiting_decision" : "player_input",
   };
 }
 
-/** True once any assistant message has GM-visible prose or a completed GM tool call. */
+/** True once this seat’s thread has GM-visible prose or a completed GM tool call. */
+export function sessionHasGmStoryForNation(
+  session: GameSession,
+  nationId: string,
+): boolean {
+  return gmThreadHasAssistantDelivery(getNationGmMessages(session, nationId));
+}
+
+/** True if any forged seat has landed GM story (legacy / global checks). */
 export function sessionHasGmStory(session: GameSession): boolean {
-  return gmThreadHasAssistantDelivery(session.gmMessages);
+  return session.nations.some(
+    (n) => n.forgeComplete && sessionHasGmStoryForNation(session, n.id),
+  );
 }
 
 export function validatePlayerTurn(
@@ -97,24 +145,25 @@ export function validatePlayerTurn(
     };
   }
 
-  if (session.phase === "gm_running") {
+  const streaming = session.gmStreamingNationIds ?? [];
+  if (streaming.includes(p.povNationId)) {
     return {
       ok: false,
       error:
-        "The GM is still writing this beat (streaming). Wait until it finishes — the page will update automatically.",
+        "The GM is still writing this seat's last turn (streaming). Wait until it finishes — the page will update automatically.",
     };
   }
 
   if (session.phase === "awaiting_decision" && session.crisis) {
     if (p.orientationRequest) {
-      if (sessionHasGmStory(session)) {
+      if (sessionHasGmStoryForNation(session, p.povNationId)) {
         return {
           ok: false,
           error:
             "The opening beat already ran — send your move in the chat field (and optional crisis fields if your client sends them).",
         };
       }
-      if (session.gmMessages.some((m) => m.role === "user")) {
+      if (getNationGmMessages(session, p.povNationId).some((m) => m.role === "user")) {
         return {
           ok: false,
           error:
@@ -192,7 +241,7 @@ export function formatPlayerTurnMessage(
 /**
  * Text to show in the **You** chat bubble: player narrative only. The wire
  * format from {@link formatPlayerTurnMessage} also appends GM-only lines
- * (crisis id/prompt, diplomacy, etc.) — those stay in `gmMessages` for the model
+ * (crisis id/prompt, diplomacy, etc.) — those stay in the seat’s GM thread for the model
  * but must not be shown as if the player typed them.
  */
 export function playerTurnChatDisplayBody(formattedTurnText: string): string {

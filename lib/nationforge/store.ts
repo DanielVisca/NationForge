@@ -200,6 +200,7 @@ export async function createGameSession(): Promise<GameSession> {
       updatedAt: now,
       promptVersion: 1,
       phase: "lobby",
+      gmStreamingNationIds: [],
       gameStarted: false,
       roundIndex: 0,
       activeNationId: "",

@@ -42,28 +42,47 @@ export type NationForgeProgress = {
 /** Ongoing governance / society development (GM sees full text server-side; peers do not). */
 export const MAX_DOMESTIC_SCRATCH_LENGTH = 1500;
 
-/** Bilateral outreach between two seats; optional reply from the recipient. */
+/** Bilateral outreach between two seats; full conversation history (multiple messages). */
 export const MAX_DIPLOMACY_MESSAGE_LENGTH = 2000;
-export const MAX_DIPLOMACY_REPLY_LENGTH = 2000;
 export const MAX_DIPLOMACY_OUTREACH_TOTAL = 80;
 /** Per-nation cap when serializing governance text into the GM prompt. */
 export const GM_GOVERNANCE_CLIP = 1200;
+
+export type DiplomacyMessage = {
+  id: string;
+  at: string;
+  fromNationId: string;
+  text: string;
+};
 
 export type DiplomaticOutreach = {
   id: string;
   at: string;
   fromNationId: string;
   toNationId: string;
-  message: string;
-  /** Recipient may reply once, or leave unanswered. */
-  reply?: { text: string; at: string };
+  messages: DiplomacyMessage[];
 };
+
+/** Append-only table events for GM / world digest (e.g. new forged seat). */
+export type TableEventKind = "seat_forged";
+
+export type TableEvent = {
+  id: string;
+  at: string;
+  kind: TableEventKind;
+  nationId: string;
+  name: string;
+};
+
+export const MAX_TABLE_EVENTS_STORED = 32;
 
 export type Nation = {
   id: string;
   name: string;
   /** Free-form nation build / government line players maintain */
   buildNotes: string;
+  /** Optional forge review chronicle (Markdown); peers may open after finalize. */
+  forgeBriefingMarkdown?: string;
   /**
    * Ongoing governance and domestic development: policy moves, mood, projects.
    * Fed to the GM as authoritative context for your nation; hidden from other players’ clients.
@@ -98,6 +117,15 @@ export type TurnLogEntry = {
   privateByNation?: Record<string, string>;
 };
 
+export type StatImpactRecord = {
+  id: string;
+  at: string;
+  roundIndex: number;
+  nationId: string;
+  deltas: Partial<Record<StatKey, number>>;
+  reserveDelta: number;
+};
+
 export type GameSecret = {
   id: string;
   nationId: string;
@@ -126,6 +154,7 @@ export type EmergentEventRecord = {
 
 /** Cap for emergentEvents on disk / in prompts. */
 export const MAX_EMERGENT_EVENTS_STORED = 50;
+export const MAX_STAT_IMPACTS_STORED = 120;
 
 export type GameSession = {
   id: string;
@@ -135,6 +164,11 @@ export type GameSession = {
   updatedAt: string;
   promptVersion: number;
   phase: GamePhase;
+  /**
+   * Nation ids with an in-flight GM stream (user message enqueued + model streaming).
+   * Other seats may still POST turns; only the same pov is blocked while listed here.
+   */
+  gmStreamingNationIds: string[];
   /** First beat begins only after every nation present has completed the forge once. */
   gameStarted: boolean;
   roundIndex: number;
@@ -145,13 +179,25 @@ export type GameSession = {
   secrets: GameSecret[];
   /** nationId -> join token (share with that seat for LAN) */
   seatTokens: Record<string, string>;
-  /** Grok thread for GM narration */
-  gmMessages: import("ai").UIMessage[];
+  /**
+   * Per-seat GM + user transcript. Legacy saves used a single `gmMessages` array;
+   * migrateSession copies that into each forged seat once.
+   */
+  gmMessagesByNationId: Record<string, import("ai").UIMessage[]>;
+  /** xAI Responses chain id per seat (optional per key). */
+  lastGmResponseIdByNationId?: Record<string, string | undefined>;
+  /** @deprecated Migrated into gmMessagesByNationId; read only for old JSON. */
+  gmMessages?: import("ai").UIMessage[];
+  /** @deprecated Use lastGmResponseIdByNationId. */
   lastGmResponseId?: string;
+  /** Recent seat / table events for world snapshot (capped). */
+  tableEvents?: TableEvent[];
   /** Bilateral messages; each party sees only threads they are part of (client filter). */
   diplomaticOutreach: DiplomaticOutreach[];
   /** GM tool append-only log; hydrate to [] in session-migrate for legacy saves. */
   emergentEvents: EmergentEventRecord[];
+  /** Numeric stat/reserve impacts from apply_stat_deltas, shown in player-facing stat UI. */
+  statImpacts: StatImpactRecord[];
 };
 
 export const MAX_REALLOC_POINTS_PER_TURN = 10;

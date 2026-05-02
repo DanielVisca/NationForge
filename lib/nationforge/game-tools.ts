@@ -5,13 +5,13 @@ import { tool } from "ai";
 import { z } from "zod";
 
 import type { Crisis, EmergentEventRecord, Nation, TurnLogEntry } from "./schema";
-import { MAX_EMERGENT_EVENTS_STORED, STAT_KEYS } from "./schema";
+import { MAX_EMERGENT_EVENTS_STORED, MAX_STAT_IMPACTS_STORED, STAT_KEYS } from "./schema";
 import {
   applyDeltasToStats,
   type StatDeltas,
   validateReallocBudget,
 } from "./validation";
-import { getGameSession, saveGameSession } from "./store";
+import { getGameSession, saveGameSession, updateGameSession } from "./store";
 
 const statDeltaSchema = z
   .object({
@@ -24,10 +24,14 @@ const statDeltaSchema = z
   })
   .strip();
 
-export function createNationForgeTools(sessionId: string) {
+export function createNationForgeTools(
+  sessionId: string,
+  /** Nation whose GM stream is executing tools (opening placeholder may only be cleared by activeNationId). */
+  toolPovNationId: string,
+) {
   const apply_stat_deltas = tool({
     description:
-      "Apply integer deltas to one nation's six Key Stats and/or reserve. Required for any numeric change. One nation per call; budget is enforced per call.",
+      "Apply integer deltas to one nation's six Key Stats and/or reserve. Required whenever this beat materially improves or worsens a nation's standing on any Key Stat or reserve (including small ±1–3 nudges). If prose uses pillar-aligned outcomes (e.g. innovation surges, prosperity spreads, stability frays, reserve spent), reflect that here in the same turn—do not rely on metaphor alone for the table numbers. One nation per call; budget is enforced per call.",
     inputSchema: z.object({
       nationId: z.string().describe("Target nation id"),
       deltas: statDeltaSchema.describe("Per-stat deltas; omit keys with no change"),
@@ -68,7 +72,25 @@ export function createNationForgeTools(sessionId: string) {
       };
       const nations = [...session.nations];
       nations[idx] = updated;
-      await saveGameSession({ ...session, nations });
+      const nonZeroDeltas = Object.fromEntries(
+        Object.entries(deltasClean).filter(([, v]) => v !== 0),
+      );
+      const hasImpact =
+        Object.keys(nonZeroDeltas).length > 0 || reserveDelta !== 0;
+      const statImpacts = hasImpact
+        ? [
+            ...session.statImpacts,
+            {
+              id: randomUUID(),
+              at: new Date().toISOString(),
+              roundIndex: session.roundIndex,
+              nationId,
+              deltas: nonZeroDeltas,
+              reserveDelta,
+            },
+          ].slice(-MAX_STAT_IMPACTS_STORED)
+        : session.statImpacts;
+      await saveGameSession({ ...session, nations, statImpacts });
       return {
         ok: true as const,
         nationId,
@@ -80,7 +102,7 @@ export function createNationForgeTools(sessionId: string) {
 
   const no_stat_change_this_turn = tool({
     description:
-      "Call when the simulation has no numeric stat or reserve changes this turn (pure narrative / diplomacy).",
+      "Call only when no nation's Key Stats or reserve should move this beat (pure flavor, diplomacy with no mechanical shift, or outcomes that do not imply any pillar or reserve change). Do not use this if visible prose implies any stat or reserve outcome for a player nation—use apply_stat_deltas instead.",
     inputSchema: z.object({
       note: z.string().optional().describe("Optional short reason for logs"),
     }),
@@ -142,9 +164,6 @@ export function createNationForgeTools(sessionId: string) {
       activeNationIds: z.array(z.string()).min(1),
     }),
     execute: async ({ prompt, options, allowCustom, activeNationIds }) => {
-      const session = await getGameSession(sessionId);
-      if (!session) return { ok: false as const, error: "Session not found" };
-
       const crisis: Crisis = {
         id: randomUUID(),
         prompt,
@@ -152,12 +171,34 @@ export function createNationForgeTools(sessionId: string) {
         allowCustom,
         activeNationIds,
       };
-      await saveGameSession({
-        ...session,
-        crisis,
-        phase: "awaiting_decision",
-        roundIndex: session.roundIndex + 1,
+      let skipReason: string | null = null;
+      const updated = await updateGameSession(sessionId, (s) => {
+        const fromPlaceholder =
+          s.crisis?.prompt.trimStart().startsWith("Placeholder") ?? false;
+        const active = (s.activeNationId ?? "").trim();
+        const tp = toolPovNationId.trim();
+        if (!fromPlaceholder && tp !== active) {
+          skipReason =
+            "Table crisis already advanced past the starter placeholder; do not call set_inflection again from this seat.";
+          return;
+        }
+        if (fromPlaceholder && tp !== active) {
+          skipReason =
+            "Only the active seat clears the starter placeholder; narrate this seat’s opening slice without set_inflection.";
+          return;
+        }
+        s.crisis = crisis;
+        s.roundIndex = s.roundIndex + 1;
+        s.phase = "awaiting_decision";
       });
+      if (!updated) return { ok: false as const, error: "Session not found" };
+      if (skipReason) {
+        return {
+          ok: true as const,
+          skipped: true as const,
+          reason: skipReason,
+        };
+      }
       return { ok: true as const, crisisId: crisis.id };
     },
   });

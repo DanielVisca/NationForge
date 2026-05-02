@@ -174,7 +174,8 @@ function playSnapshotForPollDedupe(s: PublicGameSession): string {
   const rosterForge = (s.nationRoster ?? [])
     .map((r) => `${r.id}:${r.forgeComplete ? 1 : 0}`)
     .join(",");
-  const life = `${s.gameStarted ? 1 : 0}|${s.phase}|${s.crisis?.id ?? ""}|${s.activeNationId ?? ""}|${rosterForge}`;
+  const streaming = (s.gmStreamingNationIds ?? []).join(",");
+  const life = `${s.gameStarted ? 1 : 0}|${s.phase}|${s.crisis?.id ?? ""}|${s.activeNationId ?? ""}|${rosterForge}|${streaming}`;
   return `${s.updatedAt}|${life}|${statsKey}|${impactsTail}|${gmRev}`;
 }
 
@@ -869,8 +870,18 @@ export default function NationForgeBoard() {
     });
   }, [load]);
 
-  const pollMs =
-    session?.phase === "gm_running" ? POLL_MS_GM_RUNNING : POLL_MS;
+  const anyGmStreaming = useMemo(
+    () => (session?.gmStreamingNationIds?.length ?? 0) > 0,
+    [session?.gmStreamingNationIds],
+  );
+
+  const viewerGmStreaming = useMemo(() => {
+    const vid = session?.viewerNationId;
+    if (!vid) return false;
+    return Boolean(session.gmStreamingNationIds?.includes(vid));
+  }, [session?.viewerNationId, session?.gmStreamingNationIds]);
+
+  const pollMs = anyGmStreaming ? POLL_MS_GM_RUNNING : POLL_MS;
 
   useEffect(() => {
     if (!session?.gameStarted || !session.viewerNationId) return;
@@ -902,7 +913,7 @@ export default function NationForgeBoard() {
       });
     }, pollMs);
     return () => clearInterval(t);
-  }, [load, pollMs, session?.phase]);
+  }, [load, pollMs]);
 
   const crisis = session?.crisis ?? null;
 
@@ -1074,16 +1085,17 @@ export default function NationForgeBoard() {
     session?.gameStarted && introDelivered && myNation?.forgeComplete,
   );
 
-  const isOpeningBeatSeat = Boolean(
+  /** Forged viewer in the opening card: retry / copy applies to this seat’s thread. */
+  const isViewerForgedOpeningSeat = Boolean(
     session &&
       seatToken &&
       session.viewerNationId &&
-      session.viewerNationId === session.activeNationId,
+      myNation?.forgeComplete,
   );
 
   const gmComposing = Boolean(
     session?.gameStarted &&
-      (session.phase === "gm_running" || busy || gmStreamText.length > 0),
+      (viewerGmStreaming || busy || gmStreamText.length > 0),
   );
 
   useLayoutEffect(() => {
@@ -1219,9 +1231,9 @@ export default function NationForgeBoard() {
   const canSendTurn = useMemo(() => {
     if (!session?.gameStarted || !narrative.trim()) return false;
     if (!povNation?.forgeComplete) return false;
-    if (session.phase === "gm_running") return false;
+    if (viewerGmStreaming) return false;
     return true;
-  }, [session, narrative, povNation]);
+  }, [session, narrative, povNation, viewerGmStreaming]);
 
   const claimSeat = useCallback(async () => {
     if (!session) return;
@@ -1454,7 +1466,9 @@ export default function NationForgeBoard() {
   const submitOpeningBrief = useCallback(async () => {
     if (!sessionId || !session?.crisis || !seatToken) return;
     if (openingBriefInFlight) return;
-    const opener = session.nations.find((n) => n.id === session.activeNationId);
+    const viewerId = session.viewerNationId;
+    if (!viewerId) return;
+    const opener = session.nations.find((n) => n.id === viewerId);
     if (!opener?.forgeComplete) return;
     const dedupeKey = `${session.id}:${session.crisis.id}`;
     openingBriefInFlight = true;
@@ -1468,7 +1482,7 @@ export default function NationForgeBoard() {
         body: JSON.stringify({
           sessionId,
           token: seatToken,
-          povNationId: session.activeNationId,
+          povNationId: viewerId,
           narrative: buildOpeningBriefPlayerMessage(opener),
           orientationRequest: true,
         }),
@@ -1519,10 +1533,7 @@ export default function NationForgeBoard() {
     ) {
       return;
     }
-    if (session.phase === "gm_running") return;
-    if (!session.viewerNationId || session.viewerNationId !== session.activeNationId) {
-      return;
-    }
+    if (viewerGmStreaming) return;
     const dedupeKey = `${session.id}:${session.crisis.id}`;
     if (openingBeatAutoKeySent === dedupeKey) return;
     if (Date.now() < openingBriefCooldownUntil) return;
@@ -1538,6 +1549,7 @@ export default function NationForgeBoard() {
     lastGmChapter,
     gmStreamText,
     session?.gmMessages,
+    viewerGmStreaming,
     submitOpeningBrief,
   ]);
 
@@ -1799,7 +1811,7 @@ export default function NationForgeBoard() {
           <div className="mt-4 ring-2 ring-amber-400/30 ring-offset-2 ring-offset-amber-50 dark:ring-amber-700/40 dark:ring-offset-zinc-950">
             <NationCard nation={myNation} isViewer />
           </div>
-          {busy || session.phase === "gm_running" ? (
+          {busy || viewerGmStreaming || gmStreamText.length > 0 ? (
             <p className="mt-4 text-sm font-medium text-amber-950 dark:text-amber-100">
               {gmStreamText
                 ? "Streaming your opening scene — live text appears in the chat above."
@@ -1809,10 +1821,10 @@ export default function NationForgeBoard() {
           {error ? (
             <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>
           ) : null}
-          {isOpeningBeatSeat && error ? (
+          {isViewerForgedOpeningSeat && error ? (
             <button
               type="button"
-              disabled={busy || session.phase === "gm_running"}
+              disabled={busy || viewerGmStreaming}
               className="mt-4 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-950 enabled:hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-800 dark:bg-zinc-950 dark:text-amber-100 dark:enabled:hover:bg-amber-950/40"
               onClick={() => {
                 openingBeatAutoKeySent = "";
@@ -1821,12 +1833,6 @@ export default function NationForgeBoard() {
             >
               Try opening again
             </button>
-          ) : null}
-          {!isOpeningBeatSeat ? (
-            <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
-              The active seat is opening the session — this page will refresh
-              with the GM&apos;s text shortly.
-            </p>
           ) : null}
         </section>
       ) : null}
@@ -2088,7 +2094,11 @@ export default function NationForgeBoard() {
                       }}
                       placeholder="The envoys wait in the rain. You speak, you move, you bluff—or you stay silent…"
                       spellCheck
-                      disabled={!session.gameStarted || !povNation?.forgeComplete}
+                      disabled={
+                        !session.gameStarted ||
+                        !povNation?.forgeComplete ||
+                        viewerGmStreaming
+                      }
                     />
                     {narrative.trim() ? (
                       <details className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50/90 dark:border-zinc-700 dark:bg-zinc-900/50">
@@ -2115,7 +2125,9 @@ export default function NationForgeBoard() {
                     className="w-full rounded-xl bg-zinc-900 py-3 text-sm font-semibold text-white shadow disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
                     onClick={() => void submitTurn()}
                   >
-                    {busy ? "GM is writing the next beat…" : "Send to GM"}
+                    {busy || viewerGmStreaming
+                      ? "GM is writing the next beat…"
+                      : "Send to GM"}
                   </button>
                 </div>
               ) : null}
