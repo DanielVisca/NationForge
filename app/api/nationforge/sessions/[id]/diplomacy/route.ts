@@ -5,6 +5,7 @@ import {
   MAX_DIPLOMACY_MESSAGE_LENGTH,
   MAX_DIPLOMACY_OUTREACH_TOTAL,
   type DiplomaticOutreach,
+  type DiplomacyMessage,
 } from "@/lib/nationforge/schema";
 import { rateLimitDiplomacy } from "@/lib/nationforge/rate-limit";
 import {
@@ -113,12 +114,19 @@ export async function POST(req: Request, context: Ctx) {
     );
   }
 
-  const entry: DiplomaticOutreach = {
+  const firstMessage: DiplomacyMessage = {
     id: randomUUID(),
     at: new Date().toISOString(),
     fromNationId,
+    text: message,
+  };
+
+  const entry: DiplomaticOutreach = {
+    id: randomUUID(),
+    at: firstMessage.at,
+    fromNationId,
     toNationId,
-    message,
+    messages: [firstMessage],
   };
 
   await updateGameSession(sessionId, (s) => {

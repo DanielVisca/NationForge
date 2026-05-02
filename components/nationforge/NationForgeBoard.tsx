@@ -33,20 +33,27 @@ import {
 import { consumeGmTextStream } from "@/lib/nationforge/consume-gm-stream";
 import { buildOpeningBriefPlayerMessage } from "@/lib/nationforge/opening-brief-narrative";
 import { playerTurnChatDisplayBody } from "@/lib/nationforge/player-input";
-import type { PublicGameSession } from "@/lib/nationforge/public-types";
+import type {
+  PublicEmergentEvent,
+  PublicGameSession,
+  PublicTurnLogEntry,
+} from "@/lib/nationforge/public-types";
 import {
   clearNationForgeSeat,
+  forgetNationForgeSession,
   readHostTokensForSession,
   readLastNationForgeSeat,
+  readNationForgeEnrollment,
   rememberNationForgeSeat,
 } from "@/lib/nationforge/seat-token-cache";
 import {
   MAX_DIPLOMACY_MESSAGE_LENGTH,
-  MAX_DIPLOMACY_REPLY_LENGTH,
   MAX_DOMESTIC_SCRATCH_LENGTH,
   STAT_KEYS,
   type DiplomaticOutreach,
   type Nation,
+  type StatImpactRecord,
+  type StatKey,
 } from "@/lib/nationforge/schema";
 
 import { NationForgeChatMarkdown } from "./NationForgeChatMarkdown";
@@ -54,6 +61,25 @@ import NationForgeWizard from "./NationForgeWizard";
 
 const NATIONFORGE_TTS_LS = "nationforge-tts-enabled";
 const NATIONFORGE_TTS_VOICE_LS = "nationforge-tts-voice";
+
+function initialTtsEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(NATIONFORGE_TTS_LS) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function initialTtsVoiceId(): XaiTtsVoiceId {
+  if (typeof window === "undefined") return "eve";
+  try {
+    const voiceRaw = localStorage.getItem(NATIONFORGE_TTS_VOICE_LS);
+    return voiceRaw ? normalizeXaiTtsVoiceId(voiceRaw) : "eve";
+  } catch {
+    return "eve";
+  }
+}
 
 function StatRibbon({ nation }: { nation: Nation }) {
   return (
@@ -76,6 +102,233 @@ function StatRibbon({ nation }: { nation: Nation }) {
         </span>
       ))}
     </div>
+  );
+}
+
+function statLabel(key: StatKey): string {
+  return key[0]!.toUpperCase() + key.slice(1);
+}
+
+function signedNumber(value: number): string {
+  if (value > 0) return `+${value}`;
+  return String(value);
+}
+
+function aggregateLatestImpact(
+  impacts: StatImpactRecord[],
+  nationId: string,
+): StatImpactRecord | null {
+  const mine = impacts.filter((impact) => impact.nationId === nationId);
+  if (mine.length === 0) return null;
+  const latestRound = Math.max(...mine.map((impact) => impact.roundIndex));
+  const latest = mine.filter((impact) => impact.roundIndex === latestRound);
+  const deltas = Object.fromEntries(
+    STAT_KEYS.map((key) => [
+      key,
+      latest.reduce((sum, impact) => sum + (impact.deltas[key] ?? 0), 0),
+    ]).filter(([, value]) => value !== 0),
+  ) as Partial<Record<StatKey, number>>;
+  const reserveDelta = latest.reduce(
+    (sum, impact) => sum + impact.reserveDelta,
+    0,
+  );
+  const newest = latest.reduce((a, b) =>
+    Date.parse(a.at) >= Date.parse(b.at) ? a : b,
+  );
+  return {
+    id: newest.id,
+    at: newest.at,
+    roundIndex: latestRound,
+    nationId,
+    deltas,
+    reserveDelta,
+  };
+}
+
+function DeltaBadge({ value }: { value?: number }) {
+  if (!value) {
+    return (
+      <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500">
+        no change
+      </span>
+    );
+  }
+  const positive = value > 0;
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+        positive
+          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
+          : "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200"
+      }`}
+    >
+      {signedNumber(value)}
+    </span>
+  );
+}
+
+function NationStatsPanel({
+  nation,
+  latestImpact,
+}: {
+  nation: Nation;
+  latestImpact: StatImpactRecord | null;
+}) {
+  return (
+    <section className="rounded-2xl border border-teal-200 bg-teal-50/70 p-4 shadow-sm dark:border-teal-900/50 dark:bg-teal-950/25">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-teal-800 dark:text-teal-200">
+            Your nation
+          </p>
+          <h2 className="mt-0.5 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+            {nation.name}
+          </h2>
+          <p className="mt-1 text-xs text-teal-900/75 dark:text-teal-100/75">
+            Current stats with the latest numeric impact from the GM.
+          </p>
+        </div>
+        <div className="rounded-xl border border-teal-200 bg-white/80 px-3 py-2 text-right dark:border-teal-900/50 dark:bg-zinc-950/70">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+            Reserve
+          </p>
+          <p className="text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
+            {nation.reserve}
+          </p>
+          <DeltaBadge value={latestImpact?.reserveDelta} />
+        </div>
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {STAT_KEYS.map((key) => (
+          <div
+            key={key}
+            className="rounded-xl border border-teal-100 bg-white/85 px-3 py-2 dark:border-teal-900/40 dark:bg-zinc-950/70"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                {statLabel(key)}
+              </p>
+              <DeltaBadge value={latestImpact?.deltas[key]} />
+            </div>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-zinc-50">
+              {nation.stats[key]}
+            </p>
+          </div>
+        ))}
+      </div>
+      {latestImpact ? (
+        <p className="mt-3 text-xs text-teal-900/75 dark:text-teal-100/75">
+          Latest numeric impact: round {latestImpact.roundIndex} ·{" "}
+          {new Date(latestImpact.at).toLocaleString()}
+        </p>
+      ) : (
+        <p className="mt-3 text-xs text-teal-900/70 dark:text-teal-100/70">
+          No numeric stat impact recorded yet. Narrative effects may still matter
+          before numbers move.
+        </p>
+      )}
+    </section>
+  );
+}
+
+type TimelineItem = {
+  id: string;
+  at: number;
+  eyebrow: string;
+  title: string;
+  body: string;
+  privateText?: string;
+};
+
+function clipTimelineText(text: string, max = 170): string {
+  const trimmed = text.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max).trimEnd()}…`;
+}
+
+function NationForgeTimeline({
+  turnLog,
+  emergentEvents,
+  roundIndex,
+}: {
+  turnLog: PublicTurnLogEntry[];
+  emergentEvents: PublicEmergentEvent[];
+  roundIndex: number;
+}) {
+  const items = useMemo<TimelineItem[]>(() => {
+    const beats: TimelineItem[] = turnLog.map((entry) => ({
+      id: `turn-${entry.id}`,
+      at: Date.parse(entry.at),
+      eyebrow: new Date(entry.at).toLocaleDateString(),
+      title: "Public beat",
+      body: entry.publicSummary,
+      privateText: entry.privateText,
+    }));
+    const shocks: TimelineItem[] = emergentEvents.map((event) => ({
+      id: `event-${event.id}`,
+      at: Date.parse(event.at),
+      eyebrow: event.severity ? event.severity : "World event",
+      title: event.eventTitle,
+      body: event.description,
+    }));
+    return [...beats, ...shocks]
+      .sort((a, b) => a.at - b.at)
+      .slice(-6);
+  }, [turnLog, emergentEvents]);
+
+  const latest = items[items.length - 1] ?? null;
+
+  return (
+    <details className="rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-900/90">
+      <summary className="cursor-pointer list-none px-4 py-3 marker:hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+              Timeline
+            </h2>
+            <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+              {latest
+                ? `${latest.title}: ${clipTimelineText(latest.body, 110)}`
+                : "No public events logged yet."}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-zinc-100 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-300">
+              Round {roundIndex}
+            </span>
+            <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+              expand
+            </span>
+          </div>
+        </div>
+      </summary>
+      {items.length > 0 ? (
+        <ol className="mx-4 mb-4 space-y-3 border-l border-zinc-200 pl-4 dark:border-zinc-700">
+          {items.map((item) => (
+            <li key={item.id} className="relative">
+              <span
+                className="absolute -left-[1.35rem] top-1 size-2.5 rounded-full border-2 border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-900"
+                aria-hidden="true"
+              />
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                {item.eyebrow}
+              </p>
+              <p className="mt-0.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                {item.title}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                {clipTimelineText(item.body)}
+              </p>
+              {item.privateText ? (
+                <p className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-950 dark:border-amber-900/45 dark:bg-amber-950/35 dark:text-amber-100">
+                  Private to you: {clipTimelineText(item.privateText, 140)}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </details>
   );
 }
 
@@ -136,13 +389,17 @@ export default function NationForgeBoard() {
     if (typeof window === "undefined") return null;
     const fromBar = new URLSearchParams(window.location.search).get("token");
     return fromBar && fromBar.trim().length > 0 ? fromBar : null;
-  }, [nextSearchToken, sessionId]);
+  }, [nextSearchToken]);
   /** `router.replace(?token=)` can lag behind `useSearchParams` in the same tab; hold token until URL catches up. */
   const [seatTokenBridge, setSeatTokenBridge] = useState<string | null>(null);
   const seatToken = resolvedUrlToken ?? seatTokenBridge;
 
   useEffect(() => {
-    if (resolvedUrlToken) setSeatTokenBridge(null);
+    if (resolvedUrlToken) {
+      startTransition(() => {
+        setSeatTokenBridge(null);
+      });
+    }
   }, [resolvedUrlToken]);
 
   const prevSessionIdRef = useRef<string | null>(null);
@@ -173,23 +430,27 @@ export default function NationForgeBoard() {
   const [hostTokens] = useState<Record<string, string> | null>(() =>
     readHostTokensForSession(sessionId),
   );
+  const [savedSeat, setSavedSeat] = useState<{
+    nationId: string;
+    nationName?: string;
+  } | null>(() => {
+    const e = readNationForgeEnrollment(sessionId);
+    return e ? { nationId: e.nationId, nationName: e.nationName } : null;
+  });
   const [gmStreamText, setGmStreamText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [povNationId, setPovNationId] = useState("");
   const [narrative, setNarrative] = useState("");
-  const [publicDiplomacy, setPublicDiplomacy] = useState("");
-  const [secretAction, setSecretAction] = useState("");
-  const [reallocNotes, setReallocNotes] = useState("");
 
   const [joinBusy, setJoinBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
 
-  const [ttsEnabled, setTtsEnabled] = useState(false);
-  const [ttsVoiceId, setTtsVoiceId] = useState<XaiTtsVoiceId>("eve");
+  const [ttsEnabled, setTtsEnabled] = useState(initialTtsEnabled);
+  const [ttsVoiceId, setTtsVoiceId] =
+    useState<XaiTtsVoiceId>(initialTtsVoiceId);
   const ttsVoiceIdRef = useRef<XaiTtsVoiceId>("eve");
-  ttsVoiceIdRef.current = ttsVoiceId;
   const ttsQueueRef = useRef<ReturnType<typeof createNationForgeTtsQueue> | null>(
     null,
   );
@@ -205,6 +466,10 @@ export default function NationForgeBoard() {
     return ttsQueueRef.current;
   }, []);
 
+  useEffect(() => {
+    ttsVoiceIdRef.current = ttsVoiceId;
+  }, [ttsVoiceId]);
+
   const [domesticDraft, setDomesticDraft] = useState("");
   const [domesticSaveState, setDomesticSaveState] = useState<
     "idle" | "saving" | "saved" | "error"
@@ -212,9 +477,6 @@ export default function NationForgeBoard() {
   const [domesticSaveError, setDomesticSaveError] = useState<string | null>(null);
   const domesticDirtyRef = useRef(false);
   const domesticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Screen reader: announce each crisis id once (not on every poll). */
-  const inflectionAnnouncedCrisisIdRef = useRef<string | null>(null);
-  const [inflectionAriaNotice, setInflectionAriaNotice] = useState("");
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
   const [diplomacyToId, setDiplomacyToId] = useState("");
@@ -238,10 +500,22 @@ export default function NationForgeBoard() {
     const data = (await res.json()) as PublicGameSession;
     if (token.trim() && data.viewerNationId == null) {
       clearNationForgeSeat(sessionId);
+      setSavedSeat(null);
       setSeatTokenBridge(null);
       if (resolvedUrlToken) {
         router.replace(`/nationforge/${sessionId}`);
       }
+    }
+    if (token.trim() && data.viewerNationId) {
+      const viewerNation = data.nations.find((n) => n.id === data.viewerNationId);
+      rememberNationForgeSeat(sessionId, data.viewerNationId, token, {
+        roomCode: data.roomCode,
+        nationName: viewerNation?.name,
+      });
+      setSavedSeat({
+        nationId: data.viewerNationId,
+        nationName: viewerNation?.name,
+      });
     }
     setSession((prev) => {
       if (prev && prev.id === data.id && prev.updatedAt === data.updatedAt) {
@@ -320,6 +594,11 @@ export default function NationForgeBoard() {
     return session.nations.find((n) => n.id === session.viewerNationId);
   }, [session]);
 
+  const myLatestStatImpact = useMemo(() => {
+    if (!session || !myNation) return null;
+    return aggregateLatestImpact(session.statImpacts, myNation.id);
+  }, [session, myNation]);
+
   const otherNations = useMemo(() => {
     if (!session?.viewerNationId) return [];
     return session.nations.filter((n) => n.id !== session.viewerNationId);
@@ -332,18 +611,36 @@ export default function NationForgeBoard() {
     ) as DiplomaticOutreach[];
   }, [session?.diplomaticOutreach]);
 
+  const unreadDiplomacyCount = useMemo(() => {
+    if (!session?.viewerNationId || !sortedDiplomacy.length) return 0;
+    const vid = session.viewerNationId;
+    return sortedDiplomacy.filter((o) => {
+      if (vid !== o.toNationId) return false;
+      const draft = (replyDraftById[o.id] ?? "").trim();
+      if (draft) return false;
+      const last = o.messages.at(-1);
+      if (!last) return false;
+      return last.fromNationId !== vid;
+    }).length;
+  }, [sortedDiplomacy, session?.viewerNationId, replyDraftById]);
+
   useEffect(() => {
     if (!otherNations.length) return;
     if (!diplomacyToId || !otherNations.some((n) => n.id === diplomacyToId)) {
-      setDiplomacyToId(otherNations[0]!.id);
+      startTransition(() => {
+        setDiplomacyToId(otherNations[0]!.id);
+      });
     }
   }, [otherNations, diplomacyToId]);
 
   /** Seated forged players write only as their nation (single POV). */
   useEffect(() => {
-    if (!session?.viewerNationId) return;
+    const viewerNationId = session?.viewerNationId;
+    if (!viewerNationId) return;
     if (!seatToken || !myNation?.forgeComplete) return;
-    setPovNationId(session.viewerNationId);
+    startTransition(() => {
+      setPovNationId(viewerNationId);
+    });
   }, [session?.viewerNationId, seatToken, myNation?.forgeComplete]);
 
   useEffect(() => {
@@ -353,9 +650,11 @@ export default function NationForgeBoard() {
   useEffect(() => {
     if (!myNation) return;
     if (!domesticDirtyRef.current) {
-      setDomesticDraft(myNation.domesticScratch ?? "");
+      startTransition(() => {
+        setDomesticDraft(myNation.domesticScratch ?? "");
+      });
     }
-  }, [myNation?.domesticScratch, myNation?.id]);
+  }, [myNation]);
 
   useEffect(() => {
     return () => {
@@ -406,7 +705,10 @@ export default function NationForgeBoard() {
     session &&
       session.gameStarted &&
       !waitingForTableOpen &&
-      introDelivered,
+      introDelivered &&
+      seatToken &&
+      session.viewerNationId &&
+      myNation?.forgeComplete,
   );
 
   const isOpeningBeatSeat = Boolean(
@@ -421,51 +723,13 @@ export default function NationForgeBoard() {
       (session.phase === "gm_running" || busy || gmStreamText.length > 0),
   );
 
-  /** Crisis is on the table and seats may answer (not while GM is resolving). */
-  const inflectionActive = Boolean(
-    session?.gameStarted &&
-      !waitingForTableOpen &&
-      crisis &&
-      introDelivered &&
-      session.phase === "awaiting_decision",
-  );
-
-  useEffect(() => {
-    if (!session?.crisis || !inflectionActive) {
-      if (!session?.crisis) {
-        inflectionAnnouncedCrisisIdRef.current = null;
-        setInflectionAriaNotice("");
-      }
-      return;
-    }
-    const id = session.crisis.id;
-    if (inflectionAnnouncedCrisisIdRef.current === id) return;
-    inflectionAnnouncedCrisisIdRef.current = id;
-    const p = session.crisis.prompt.trim();
-    const clip = p.length > 160 ? `${p.slice(0, 160)}…` : p;
-    setInflectionAriaNotice(`New inflection. ${clip}`);
-  }, [session?.crisis, inflectionActive]);
-
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [
     session?.gmMessages?.length,
     session?.updatedAt,
     gmStreamText,
-    inflectionActive,
-    session?.crisis?.id,
   ]);
-
-  useEffect(() => {
-    try {
-      const v = localStorage.getItem(NATIONFORGE_TTS_LS);
-      if (v === "1") setTtsEnabled(true);
-      const voiceRaw = localStorage.getItem(NATIONFORGE_TTS_VOICE_LS);
-      if (voiceRaw) setTtsVoiceId(normalizeXaiTtsVoiceId(voiceRaw));
-    } catch {
-      /* ignore */
-    }
-  }, []);
 
   useEffect(() => {
     try {
@@ -513,9 +777,6 @@ export default function NationForgeBoard() {
         const id = typeof m.id === "string" && m.id ? m.id : `i-${i}`;
         nextSeen.add(`gm:${id}`);
       });
-      if (inflectionActive && session.crisis) {
-        nextSeen.add(`inflection:${session.crisis.id}:${session.crisis.prompt}`);
-      }
       ttsSeenKeysRef.current = nextSeen;
       ttsPrimedRef.current = true;
       return;
@@ -537,40 +798,12 @@ export default function NationForgeBoard() {
       }
     });
 
-    if (inflectionActive && session.crisis) {
-      const k = `inflection:${session.crisis.id}:${session.crisis.prompt}`;
-      if (!ttsSeenKeysRef.current.has(k)) {
-        const lastMsg =
-          session.gmMessages.length > 0
-            ? session.gmMessages[session.gmMessages.length - 1]
-            : undefined;
-        /** Inflection sits below the transcript; defer until GM stream is idle and the latest row is not a pending user turn (so GM prose lands before crisis TTS). */
-        const deferInflectionTts =
-          gmComposing || lastMsg?.role === "user";
-
-        if (!deferInflectionTts) {
-          ttsSeenKeysRef.current.add(k);
-          const plain = markdownishToSpeechText(session.crisis.prompt);
-          if (plain) {
-            const labeled = `Inflection. ${plain}`;
-            const inflChunks = chunkTextForTts(labeled);
-            for (const chunk of inflChunks) {
-              q.enqueue(chunk);
-            }
-          }
-        }
-      }
-    }
   }, [
     ttsEnabled,
     sessionId,
     session,
     session?.updatedAt,
-    inflectionActive,
-    crisis?.id,
-    crisis?.prompt,
     getTtsQueue,
-    gmComposing,
   ]);
 
   const canSendTurn = useMemo(() => {
@@ -600,9 +833,14 @@ export default function NationForgeBoard() {
       const data = (await res.json()) as {
         sessionId: string;
         nationId: string;
+        name?: string;
         token: string;
       };
-      rememberNationForgeSeat(data.sessionId, data.nationId, data.token);
+      rememberNationForgeSeat(data.sessionId, data.nationId, data.token, {
+        roomCode: session.roomCode,
+        nationName: data.name,
+      });
+      setSavedSeat({ nationId: data.nationId, nationName: data.name });
       setSeatTokenBridge(data.token);
       router.replace(
         `/nationforge/${data.sessionId}?token=${encodeURIComponent(data.token)}`,
@@ -616,6 +854,10 @@ export default function NationForgeBoard() {
 
   const submitTurn = useCallback(async () => {
     if (!sessionId) return;
+    if (!seatToken) {
+      setError("Join with your seat token before sending moves.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setGmStreamText("");
@@ -625,11 +867,9 @@ export default function NationForgeBoard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId,
+          token: seatToken,
           povNationId,
           narrative,
-          publicDiplomacy: publicDiplomacy || undefined,
-          secretAction: secretAction || undefined,
-          reallocNotes: reallocNotes || undefined,
         }),
       });
       if (res.status === 429) {
@@ -651,9 +891,6 @@ export default function NationForgeBoard() {
         setGmStreamText((x) => x + d);
       });
       setNarrative("");
-      setPublicDiplomacy("");
-      setSecretAction("");
-      setReallocNotes("");
       await load();
       setGmStreamText("");
     } catch (e) {
@@ -663,11 +900,9 @@ export default function NationForgeBoard() {
     }
   }, [
     sessionId,
+    seatToken,
     povNationId,
     narrative,
-    publicDiplomacy,
-    secretAction,
-    reallocNotes,
     load,
   ]);
 
@@ -807,7 +1042,7 @@ export default function NationForgeBoard() {
   );
 
   const submitOpeningBrief = useCallback(async () => {
-    if (!sessionId || !session?.crisis) return;
+    if (!sessionId || !session?.crisis || !seatToken) return;
     if (openingBriefInFlight) return;
     const opener = session.nations.find((n) => n.id === session.activeNationId);
     if (!opener?.forgeComplete) return;
@@ -822,6 +1057,7 @@ export default function NationForgeBoard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId,
+          token: seatToken,
           povNationId: session.activeNationId,
           narrative: buildOpeningBriefPlayerMessage(opener),
           orientationRequest: true,
@@ -860,7 +1096,7 @@ export default function NationForgeBoard() {
       openingBriefInFlight = false;
       setBusy(false);
     }
-  }, [sessionId, session, load]);
+  }, [sessionId, seatToken, session, load]);
 
   useEffect(() => {
     if (!session || !seatToken || !myNation?.forgeComplete) return;
@@ -957,6 +1193,26 @@ export default function NationForgeBoard() {
           <div className="mt-2 font-mono break-all text-[11px]">
             {origin}/nationforge/join?code={session.roomCode}
           </div>
+          {savedSeat ? (
+            <div className="mt-3 rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-2 text-[11px] text-teal-950 dark:border-teal-900/50 dark:bg-teal-950/30 dark:text-teal-100">
+              <p className="font-medium">
+                Saved on this browser
+                {savedSeat.nationName ? ` as ${savedSeat.nationName}` : ""}
+              </p>
+              <button
+                type="button"
+                className="mt-1 text-teal-800 underline dark:text-teal-200"
+                onClick={() => {
+                  forgetNationForgeSession(sessionId);
+                  setSavedSeat(null);
+                  setSeatTokenBridge(null);
+                  router.replace(`/nationforge/${sessionId}`);
+                }}
+              >
+                Forget this seat on this browser
+              </button>
+            </div>
+          ) : null}
           {hostTokens ? (
             <ul className="mt-3 space-y-1 border-t border-zinc-200 pt-2 dark:border-zinc-700">
               <li className="font-medium text-amber-900 dark:text-amber-200">
@@ -997,12 +1253,12 @@ export default function NationForgeBoard() {
           crisisInvolvedNames.length > 0 ? (
             <>
               <p className="mt-2 text-xs font-medium text-teal-900 dark:text-teal-100/90">
-                Crisis involves: {crisisInvolvedNames.join(", ")}
+                Current beat involves: {crisisInvolvedNames.join(", ")}
               </p>
               <p className="mt-1 text-[11px] text-teal-800/90 dark:text-teal-200/80">
                 {session.crisis.activeNationIds.length <= 1
-                  ? "This inflection highlights a single seat."
-                  : "This inflection spans multiple seats — each nation answers from their own chat POV."}
+                  ? "The latest GM message highlights a single seat."
+                  : "The latest GM message spans multiple seats — each nation answers from their own chat POV."}
               </p>
             </>
           ) : null}
@@ -1042,6 +1298,23 @@ export default function NationForgeBoard() {
           Your nation is forged. Waiting for everyone else to finish their
           builder before the GM opens the table.
         </div>
+      ) : null}
+
+      {session.gameStarted &&
+      !waitingForTableOpen &&
+      myNation?.forgeComplete ? (
+        <NationStatsPanel
+          nation={myNation}
+          latestImpact={myLatestStatImpact}
+        />
+      ) : null}
+
+      {session.gameStarted && !waitingForTableOpen && introDelivered ? (
+        <NationForgeTimeline
+          turnLog={session.turnLog}
+          emergentEvents={session.emergentEvents}
+          roundIndex={session.roundIndex}
+        />
       ) : null}
 
       <div className="space-y-6">
@@ -1101,8 +1374,33 @@ export default function NationForgeBoard() {
       ) : null}
 
           {session.gameStarted && !waitingForTableOpen && introDelivered ? (
-            <section className="flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/90">
+            <section className="flex min-h-[min(82vh,900px)] flex-col gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/90">
               <h2 className="sr-only">NationForge chat</h2>
+              <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
+                {seatPovLocked && myNation ? (
+                  <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                    Playing as{" "}
+                    <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                      {myNation.name}
+                    </span>
+                    <span className="ml-2 text-zinc-400">
+                      You see public table history plus your own private notes and
+                      secrets.
+                    </span>
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
+                      Spectating public table
+                    </p>
+                    <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                      You can read public GM history, public timeline events, and
+                      known nation summaries. Join with a seat token to see one
+                      nation&apos;s private state and send moves.
+                    </p>
+                  </div>
+                )}
+              </div>
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200/80 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
                 <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-700 dark:text-zinc-200">
                   <input
@@ -1151,7 +1449,7 @@ export default function NationForgeBoard() {
                 ) : null}
               </div>
               <div
-                className="max-h-[min(70vh,560px)] min-h-[260px] space-y-3 overflow-y-auto rounded-xl border border-zinc-200/80 bg-zinc-50/90 p-3 dark:border-zinc-700 dark:bg-zinc-900/50"
+                className="min-h-[260px] flex-1 space-y-3 overflow-y-auto rounded-xl border border-zinc-200/80 bg-zinc-50/90 p-3 dark:border-zinc-700 dark:bg-zinc-900/50"
                 role="log"
               >
                 {session.gmMessages.length === 0 ? (
@@ -1207,27 +1505,6 @@ export default function NationForgeBoard() {
                   }
                   return null;
                 })}
-                {inflectionActive && crisis ? (
-                  <div className="flex justify-start">
-                    <div className="max-w-[92%] rounded-2xl border border-amber-200/90 bg-amber-50/90 px-4 py-3 text-sm dark:border-amber-900/45 dark:bg-amber-950/35">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-amber-900 dark:text-amber-200">
-                        Inflection
-                      </p>
-                      <p className="mt-1 text-xs text-amber-950/90 dark:text-amber-100/90">
-                        Describe what your nation does in the message box below —
-                        any coherent action is valid.
-                      </p>
-                      {crisisInvolvedNames.length > 0 ? (
-                        <p className="mt-2 text-[11px] font-medium text-amber-900 dark:text-amber-200">
-                          Focus: {crisisInvolvedNames.join(", ")}
-                        </p>
-                      ) : null}
-                      <div className="mt-2 text-sm font-medium text-zinc-900 dark:text-zinc-50">
-                        <NationForgeChatMarkdown source={crisis.prompt} />
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
                 {gmComposing ? (
                   <div className="flex justify-start">
                     <div className="max-w-[92%] rounded-2xl border border-sky-200 bg-sky-50/90 px-4 py-3 text-sm dark:border-sky-800/60 dark:bg-sky-950/40">
@@ -1247,48 +1524,11 @@ export default function NationForgeBoard() {
                     </div>
                   </div>
                 ) : null}
-                <div
-                  className="sr-only"
-                  role="status"
-                  aria-live="polite"
-                  aria-atomic="true"
-                >
-                  {inflectionAriaNotice}
-                </div>
                 <div ref={transcriptEndRef} className="h-px w-full shrink-0" />
               </div>
 
               {showTurnComposer ? (
-                <div className="space-y-3 border-t border-zinc-200 pt-3 dark:border-zinc-700">
-                  {seatPovLocked && myNation ? (
-                    <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                      Writing as{" "}
-                      <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-                        {myNation.name}
-                      </span>
-                    </p>
-                  ) : (
-                    <div className="flex flex-wrap items-end gap-3">
-                      <div className="min-w-[12rem] flex-1">
-                        <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                          Whose eyes are we in?
-                        </label>
-                        <select
-                          className="mt-1 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm dark:border-zinc-600 dark:bg-zinc-950"
-                          value={povNationId}
-                          onChange={(e) => setPovNationId(e.target.value)}
-                          disabled={!session.nations.length}
-                        >
-                          {session.nations.map((n) => (
-                            <option key={n.id} value={n.id}>
-                              {n.name}
-                              {!n.forgeComplete ? " (still forging)" : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  )}
+                <div className="sticky bottom-0 space-y-3 border-t border-zinc-200 bg-white/95 pt-3 backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95">
                   <div>
                     <label
                       htmlFor="nationforge-chat-message"
@@ -1297,22 +1537,23 @@ export default function NationForgeBoard() {
                       Message
                     </label>
                     <p className="mt-1 text-xs text-zinc-500">
-                      Describe what your nation does.{" "}
-                      <span className="font-semibold">Markdown</span> in the
-                      transcript renders for you, the GM, and inflection prompts (
-                      <code className="rounded bg-zinc-200/80 px-0.5 dark:bg-zinc-700">
-                        **bold**
-                      </code>
-                      , headings, lists, links).{" "}
-                      <span className="font-semibold">Enter</span> starts a new
-                      line; send with the button. Optional fields are under{" "}
-                      <span className="font-semibold">More with this send</span>.
+                      Tell the GM what your nation does. Include diplomacy,
+                      covert moves, reforms, or reserve/stat intent naturally in
+                      the message.
                     </p>
                     <textarea
                       id="nationforge-chat-message"
-                      className="mt-2 min-h-[12rem] w-full resize-y rounded-xl border border-zinc-300 bg-white px-4 py-3 text-base leading-relaxed text-zinc-900 shadow-inner outline-none ring-zinc-400 focus:border-zinc-500 focus:ring-2 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-50 dark:focus:border-zinc-500"
+                      className="mt-2 min-h-[8rem] w-full resize-y rounded-xl border border-zinc-300 bg-white px-4 py-3 text-base leading-relaxed text-zinc-900 shadow-inner outline-none ring-zinc-400 focus:border-zinc-500 focus:ring-2 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-50 dark:focus:border-zinc-500"
                       value={narrative}
                       onChange={(e) => setNarrative(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.nativeEvent.isComposing) return;
+                        if (e.key !== "Enter" || e.shiftKey) return;
+                        e.preventDefault();
+                        if (!busy && canSendTurn) {
+                          void submitTurn();
+                        }
+                      }}
                       placeholder="The envoys wait in the rain. You speak, you move, you bluff—or you stay silent…"
                       spellCheck
                       disabled={!session.gameStarted || !povNation?.forgeComplete}
@@ -1331,123 +1572,6 @@ export default function NationForgeBoard() {
                       </details>
                     ) : null}
                   </div>
-                  <details className="rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900/40">
-                    <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                      More with this send (optional)
-                    </summary>
-                    <div className="space-y-4 border-t border-zinc-200 p-3 dark:border-zinc-700">
-                      {seatToken && myNation?.forgeComplete ? (
-                        <div>
-                          <p className="text-[10px] font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-                            Your seat
-                          </p>
-                          <div className="mt-2">
-                            <StatRibbon nation={myNation} />
-                          </div>
-                          <details className="mt-2">
-                            <summary className="cursor-pointer text-xs font-medium text-blue-600 underline dark:text-blue-400">
-                              Full nation sheet (stats &amp; forge log)
-                            </summary>
-                            <div className="mt-2">
-                              <NationCard nation={myNation} isViewer />
-                            </div>
-                          </details>
-                        </div>
-                      ) : null}
-                      <div>
-                        <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                          Governance notes (private, saved between sends)
-                        </label>
-                        <p className="mt-0.5 text-[11px] text-zinc-500">
-                          Does not change stats by itself.
-                        </p>
-                        <textarea
-                          className="mt-1 min-h-[5rem] w-full resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm leading-relaxed text-zinc-900 outline-none ring-zinc-400 focus:border-zinc-500 focus:ring-2 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-zinc-500"
-                          value={domesticDraft}
-                          maxLength={MAX_DOMESTIC_SCRATCH_LENGTH}
-                          onChange={(e) => {
-                            const v = e.target.value.slice(
-                              0,
-                              MAX_DOMESTIC_SCRATCH_LENGTH,
-                            );
-                            domesticDirtyRef.current = true;
-                            setDomesticDraft(v);
-                            setDomesticSaveState("idle");
-                            scheduleDomesticSave(v);
-                          }}
-                          onBlur={() => {
-                            if (domesticDebounceRef.current) {
-                              clearTimeout(domesticDebounceRef.current);
-                              domesticDebounceRef.current = null;
-                            }
-                            void saveDomesticScratch(domesticDraft);
-                          }}
-                          placeholder="Domestic brief for the GM…"
-                          spellCheck
-                        />
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                          <span>
-                            {domesticDraft.length}/{MAX_DOMESTIC_SCRATCH_LENGTH}
-                          </span>
-                          {domesticSaveState === "saving" ? (
-                            <span className="text-zinc-600 dark:text-zinc-400">
-                              Saving…
-                            </span>
-                          ) : null}
-                          {domesticSaveState === "saved" ? (
-                            <span className="text-emerald-700 dark:text-emerald-400">
-                              Saved
-                            </span>
-                          ) : null}
-                          {domesticSaveState === "error" && domesticSaveError ? (
-                            <span className="text-red-600 dark:text-red-400">
-                              {domesticSaveError}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                          Public diplomacy (with this send)
-                        </label>
-                        <textarea
-                          className="mt-1 min-h-[3rem] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-                          value={publicDiplomacy}
-                          onChange={(e) => setPublicDiplomacy(e.target.value)}
-                          placeholder="What other nations hear…"
-                          disabled={!session.gameStarted}
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                          Secret action
-                        </label>
-                        <textarea
-                          className="mt-1 min-h-[3rem] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-                          value={secretAction}
-                          onChange={(e) => setSecretAction(e.target.value)}
-                          placeholder="What stays off the wire…"
-                          disabled={!session.gameStarted}
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                          Future stat / reserve reallocation (optional, max 10 pts movement)
-                        </label>
-                        <p className="mt-0.5 text-[11px] text-zinc-500">
-                          Ask the GM to spend reserve or shift emphasis in future
-                          rounds; fiction still decides whether numbers move.
-                        </p>
-                        <textarea
-                          className="mt-1 min-h-[2.5rem] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-                          value={reallocNotes}
-                          onChange={(e) => setReallocNotes(e.target.value)}
-                          placeholder="e.g. spend 4 reserve on counter-intel, or shift emphasis from power toward innovation…"
-                          disabled={!session.gameStarted}
-                        />
-                      </div>
-                    </div>
-                  </details>
                   {error ? (
                     <p className="text-sm text-red-600 dark:text-red-400">
                       {error}
@@ -1474,9 +1598,77 @@ export default function NationForgeBoard() {
 
           <details className="rounded-xl border border-zinc-200 dark:border-zinc-700">
             <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              Session reference (log, secrets, roster, diplomacy)
+              Session reference (notebook, log, secrets, roster, diplomacy)
             </summary>
             <div className="space-y-6 border-t border-zinc-100 p-4 dark:border-zinc-800">
+              {seatToken && myNation?.forgeComplete ? (
+                <section className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                        Private nation notebook
+                      </h3>
+                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        Persistent context the GM sees for your nation. It is not
+                        sent as a turn and does not change stats by itself.
+                      </p>
+                    </div>
+                    <StatRibbon nation={myNation} />
+                  </div>
+                  <textarea
+                    className="mt-3 min-h-[7rem] w-full resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm leading-relaxed text-zinc-900 outline-none ring-zinc-400 focus:border-zinc-500 focus:ring-2 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-zinc-500"
+                    value={domesticDraft}
+                    maxLength={MAX_DOMESTIC_SCRATCH_LENGTH}
+                    onChange={(e) => {
+                      const v = e.target.value.slice(
+                        0,
+                        MAX_DOMESTIC_SCRATCH_LENGTH,
+                      );
+                      domesticDirtyRef.current = true;
+                      setDomesticDraft(v);
+                      setDomesticSaveState("idle");
+                      scheduleDomesticSave(v);
+                    }}
+                    onBlur={() => {
+                      if (domesticDebounceRef.current) {
+                        clearTimeout(domesticDebounceRef.current);
+                        domesticDebounceRef.current = null;
+                      }
+                      void saveDomesticScratch(domesticDraft);
+                    }}
+                    placeholder="Private operating notes, long-running institutions, social contracts, internal priorities..."
+                    spellCheck
+                  />
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                    <span>
+                      {domesticDraft.length}/{MAX_DOMESTIC_SCRATCH_LENGTH}
+                    </span>
+                    {domesticSaveState === "saving" ? (
+                      <span className="text-zinc-600 dark:text-zinc-400">
+                        Saving…
+                      </span>
+                    ) : null}
+                    {domesticSaveState === "saved" ? (
+                      <span className="text-emerald-700 dark:text-emerald-400">
+                        Saved
+                      </span>
+                    ) : null}
+                    {domesticSaveState === "error" && domesticSaveError ? (
+                      <span className="text-red-600 dark:text-red-400">
+                        {domesticSaveError}
+                      </span>
+                    ) : null}
+                  </div>
+                  <details className="mt-3">
+                    <summary className="cursor-pointer text-xs font-medium text-blue-600 underline dark:text-blue-400">
+                      Full nation sheet (stats &amp; forge log)
+                    </summary>
+                    <div className="mt-2">
+                      <NationCard nation={myNation} isViewer />
+                    </div>
+                  </details>
+                </section>
+              ) : null}
               <section>
                 <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Public beat log
@@ -1495,6 +1687,11 @@ export default function NationForgeBoard() {
                           <p className="mt-2 whitespace-pre-wrap pl-2 text-zinc-800 dark:text-zinc-200">
                             {e.publicSummary}
                           </p>
+                          {e.privateText ? (
+                            <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-950 dark:border-amber-900/45 dark:bg-amber-950/35 dark:text-amber-100">
+                              Private to you: {e.privateText}
+                            </p>
+                          ) : null}
                         </details>
                       ) : (
                         <>
@@ -1504,6 +1701,11 @@ export default function NationForgeBoard() {
                           <p className="mt-1 whitespace-pre-wrap text-zinc-900 dark:text-zinc-100">
                             {e.publicSummary}
                           </p>
+                          {e.privateText ? (
+                            <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-950 dark:border-amber-900/45 dark:bg-amber-950/35 dark:text-amber-100">
+                              Private to you: {e.privateText}
+                            </p>
+                          ) : null}
                         </>
                       )}
                     </li>
@@ -1600,11 +1802,18 @@ export default function NationForgeBoard() {
               ) : null}
               {seatToken && myNation?.forgeComplete ? (
                 <section className="rounded-lg border border-indigo-200/90 bg-indigo-50/70 p-3 dark:border-indigo-900/40 dark:bg-indigo-950/35">
-                  <h3 className="text-xs font-semibold uppercase text-indigo-900 dark:text-indigo-200">
-                    Structured messages (optional)
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-semibold uppercase text-indigo-900 dark:text-indigo-200">
+                      Structured messages (optional)
+                    </h3>
+                    {unreadDiplomacyCount > 0 && (
+                      <span className="rounded-full bg-red-500 px-1.5 py-px text-[10px] font-bold text-white">
+                        {unreadDiplomacyCount}
+                      </span>
+                    )}
+                  </div>
                   <p className="mt-1 text-xs text-indigo-950/85 dark:text-indigo-100/85">
-                    Bilateral threads — only you and the other nation see a thread.
+                    Bilateral threads — only you and the other nation see a thread. New messages are highlighted.
                   </p>
                   {otherNations.length > 0 ? (
                     <>
@@ -1660,7 +1869,7 @@ export default function NationForgeBoard() {
                         {diplomacyMessage.length}/{MAX_DIPLOMACY_MESSAGE_LENGTH} characters
                       </p>
                       {sortedDiplomacy.length > 0 ? (
-                        <ul className="mt-4 space-y-4 border-t border-indigo-200/60 pt-4 dark:border-indigo-800/50">
+                        <ul className="mt-4 space-y-6 border-t border-indigo-200/60 pt-4 dark:border-indigo-800/50">
                           {sortedDiplomacy.map((o) => {
                             const fromName =
                               session.nations.find((n) => n.id === o.fromNationId)
@@ -1669,47 +1878,42 @@ export default function NationForgeBoard() {
                               session.nations.find((n) => n.id === o.toNationId)
                                 ?.name ?? o.toNationId;
                             const vid = session.viewerNationId;
-                            const iAmSender = vid === o.fromNationId;
-                            const iAmRecipient = vid === o.toNationId;
+                            const iAmParticipant = vid === o.fromNationId || vid === o.toNationId;
                             return (
                               <li
                                 key={o.id}
-                                className="rounded-lg border border-indigo-100 bg-white/90 p-3 text-sm dark:border-indigo-900/50 dark:bg-zinc-950/80"
+                                className="rounded-lg border border-indigo-100 bg-white/90 p-4 text-sm dark:border-indigo-900/50 dark:bg-zinc-950/80"
                               >
                                 <p className="text-[11px] font-medium uppercase tracking-wide text-indigo-700 dark:text-indigo-300">
-                                  {new Date(o.at).toLocaleString()} ·{" "}
-                                  {iAmSender
-                                    ? `You → ${toName}`
-                                    : iAmRecipient
-                                      ? `${fromName} → you`
-                                      : `${fromName} → ${toName}`}
+                                  Thread with {fromName} ↔ {toName}
                                 </p>
-                                <p className="mt-2 whitespace-pre-wrap text-zinc-800 dark:text-zinc-200">
-                                  {o.message}
-                                </p>
-                                {o.reply ? (
-                                  <div className="mt-3 rounded-md border border-indigo-100 bg-indigo-50/80 px-3 py-2 text-xs dark:border-indigo-900/40 dark:bg-indigo-950/50">
-                                    <p className="font-medium text-indigo-900 dark:text-indigo-200">
-                                      {iAmRecipient ? "Your reply" : `${toName} replied`}{" "}
-                                      · {new Date(o.reply.at).toLocaleString()}
-                                    </p>
-                                    <p className="mt-1 whitespace-pre-wrap text-zinc-800 dark:text-zinc-200">
-                                      {o.reply.text}
-                                    </p>
-                                  </div>
-                                ) : iAmRecipient ? (
-                                  <div className="mt-3 space-y-2">
+                                <div className="mt-3 space-y-4">
+                                  {o.messages.map((msg) => {
+                                    const isFromMe = vid === msg.fromNationId;
+                                    const senderName = isFromMe ? "You" : (session.nations.find((n) => n.id === msg.fromNationId)?.name ?? msg.fromNationId);
+                                    return (
+                                      <div key={msg.id} className={`flex ${isFromMe ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`max-w-[80%] rounded-2xl px-3 py-2 ${isFromMe ? 'bg-indigo-600 text-white' : 'bg-zinc-100 dark:bg-zinc-800'}`}>
+                                          <p className="text-[10px] opacity-75">{senderName} · {new Date(msg.at).toLocaleString()}</p>
+                                          <p className="whitespace-pre-wrap text-sm mt-1">{msg.text}</p>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                {iAmParticipant && (
+                                  <div className="mt-4 space-y-2">
                                     <textarea
                                       className="min-h-[3.5rem] w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs dark:border-indigo-800 dark:bg-zinc-950"
-                                      placeholder="Optional reply (one per thread)…"
-                                      maxLength={MAX_DIPLOMACY_REPLY_LENGTH}
+                                      placeholder="Continue the conversation..."
+                                      maxLength={MAX_DIPLOMACY_MESSAGE_LENGTH}
                                       value={replyDraftById[o.id] ?? ""}
                                       onChange={(e) =>
                                         setReplyDraftById((prev) => ({
                                           ...prev,
                                           [o.id]: e.target.value.slice(
                                             0,
-                                            MAX_DIPLOMACY_REPLY_LENGTH,
+                                            MAX_DIPLOMACY_MESSAGE_LENGTH,
                                           ),
                                         }))
                                       }
@@ -1721,7 +1925,7 @@ export default function NationForgeBoard() {
                                         diplomacyBusy ||
                                         !(replyDraftById[o.id] ?? "").trim()
                                       }
-                                      className="rounded-lg bg-indigo-800 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-indigo-300 dark:text-indigo-950"
+                                      className="rounded-lg bg-indigo-800 px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-indigo-300 dark:text-indigo-950"
                                       onClick={() =>
                                         void sendDiplomacyReply(
                                           o.id,
@@ -1729,21 +1933,17 @@ export default function NationForgeBoard() {
                                         )
                                       }
                                     >
-                                      Send reply
+                                      Send message
                                     </button>
                                   </div>
-                                ) : iAmSender ? (
-                                  <p className="mt-2 text-xs italic text-zinc-500 dark:text-zinc-400">
-                                    Awaiting their response (they may ignore this).
-                                  </p>
-                                ) : null}
+                                )}
                               </li>
                             );
                           })}
                         </ul>
                       ) : (
                         <p className="mt-4 border-t border-indigo-200/60 pt-3 text-xs text-indigo-900/70 dark:border-indigo-800/50 dark:text-indigo-200/70">
-                          No threads yet.
+                          No threads yet. Use the form above to start a bilateral conversation with another nation.
                         </p>
                       )}
                     </>

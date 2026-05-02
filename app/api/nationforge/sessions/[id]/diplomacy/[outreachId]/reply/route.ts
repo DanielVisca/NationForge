@@ -1,6 +1,11 @@
+import { randomUUID } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
-import { MAX_DIPLOMACY_REPLY_LENGTH } from "@/lib/nationforge/schema";
+import {
+  MAX_DIPLOMACY_MESSAGE_LENGTH,
+  type DiplomacyMessage,
+} from "@/lib/nationforge/schema";
 import { rateLimitDiplomacy } from "@/lib/nationforge/rate-limit";
 import {
   filterSessionForClient,
@@ -56,10 +61,10 @@ export async function POST(req: Request, context: Ctx) {
   if (!reply) {
     return NextResponse.json({ error: "Reply cannot be empty." }, { status: 400 });
   }
-  if (reply.length > MAX_DIPLOMACY_REPLY_LENGTH) {
+  if (reply.length > MAX_DIPLOMACY_MESSAGE_LENGTH) {
     return NextResponse.json(
       {
-        error: `Reply too long (max ${MAX_DIPLOMACY_REPLY_LENGTH} characters).`,
+        error: `Reply too long (max ${MAX_DIPLOMACY_MESSAGE_LENGTH} characters).`,
       },
       { status: 400 },
     );
@@ -90,28 +95,28 @@ export async function POST(req: Request, context: Ctx) {
   }
 
   const outreach = session.diplomaticOutreach[idx]!;
-  if (outreach.toNationId !== replierNationId) {
+  if (outreach.toNationId !== replierNationId && outreach.fromNationId !== replierNationId) {
     return NextResponse.json(
-      { error: "Only the recipient nation can reply to this outreach." },
+      { error: "Only participants can reply to this thread." },
       { status: 403 },
     );
   }
-  if (outreach.reply) {
-    return NextResponse.json(
-      { error: "This outreach already has a reply." },
-      { status: 400 },
-    );
-  }
+
+  const newReply: DiplomacyMessage = {
+    id: randomUUID(),
+    at: new Date().toISOString(),
+    fromNationId: replierNationId,
+    text: reply,
+  };
 
   await updateGameSession(sessionId, (s) => {
     const i = (s.diplomaticOutreach ?? []).findIndex((o) => o.id === outreachId);
     if (i === -1) return;
     const o = s.diplomaticOutreach[i]!;
-    if (o.reply) return;
     s.diplomaticOutreach = [...s.diplomaticOutreach];
     s.diplomaticOutreach[i] = {
       ...o,
-      reply: { text: reply, at: new Date().toISOString() },
+      messages: [...o.messages, newReply],
     };
   });
 

@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
+}
+
+html.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 @theme inline {
@@ -12,15 +19,73 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+html[data-text-scale="sm"] {
+  font-size: 93.75%;
+}
+
+html[data-text-scale="md"] {
+  font-size: 100%;
+}
+
+html[data-text-scale="lg"] {
+  font-size: 112.5%;
+}
+
+html[data-font="readable"] body {
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+}
+
+html[data-font="playful"] body {
+  font-family: var(--font-playful), var(--font-geist-sans), system-ui, sans-serif;
+}
+
+html[data-theme="unicorn"] body {
+  color-scheme: light;
+  background: linear-gradient(
+    125deg,
+    #fce7f3 0%,
+    #e9d5ff 22%,
+    #dbeafe 44%,
+    #cffafe 66%,
+    #fef9c3 88%,
+    #fce7f3 100%
+  );
+  background-attachment: fixed;
+  color: var(--foreground);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-theme="unicorn"] body {
+    background-size: 200% 200%;
+    animation: unicorn-bg-shift 20s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme="unicorn"] body {
+    background-size: cover;
+  }
+}
+
+@keyframes unicorn-bg-shift {
+  0%,
+  100% {
+    background-position: 0% 40%;
+  }
+  50% {
+    background-position: 100% 60%;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
 }
