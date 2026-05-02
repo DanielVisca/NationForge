@@ -269,7 +269,9 @@ export async function POST(req: Request) {
   const tools = createNationForgeTools(body.sessionId, pov);
   const lastResponseId =
     queued.lastGmResponseIdByNationId?.[pov] ?? queued.lastGmResponseId;
-  const usePreviousResponse = Boolean(lastResponseId);
+  /** Do not chain `previous_response_id` until this thread has a prior assistant turn — xAI rejects mismatched chains (400) and it breaks first opening beats. */
+  const hasAssistantInThread = allMessages.some((m) => m.role === "assistant");
+  const usePreviousResponse = Boolean(lastResponseId) && hasAssistantInThread;
 
   try {
     const fullModelMessages = await convertToModelMessages(allMessages, {

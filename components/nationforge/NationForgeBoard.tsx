@@ -1464,13 +1464,14 @@ export default function NationForgeBoard() {
   );
 
   const submitOpeningBrief = useCallback(async () => {
-    if (!sessionId || !session?.crisis || !seatToken) return;
+    const snap = sessionRef.current;
+    if (!sessionId || !snap?.crisis || !seatToken) return;
     if (openingBriefInFlight) return;
-    const viewerId = session.viewerNationId;
+    const viewerId = snap.viewerNationId;
     if (!viewerId) return;
-    const opener = session.nations.find((n) => n.id === viewerId);
+    const opener = snap.nations.find((n) => n.id === viewerId);
     if (!opener?.forgeComplete) return;
-    const dedupeKey = `${session.id}:${session.crisis.id}`;
+    const dedupeKey = `${snap.id}:${snap.crisis.id}`;
     openingBriefInFlight = true;
     setBusy(true);
     setError(null);
@@ -1520,8 +1521,9 @@ export default function NationForgeBoard() {
       openingBriefInFlight = false;
       setBusy(false);
     }
-  }, [sessionId, seatToken, session, load]);
+  }, [sessionId, seatToken, load]);
 
+  /** Auto-fire opening brief once per crisis; deps use primitives so session poll identity does not retrigger every tick. */
   useEffect(() => {
     if (!session || !seatToken || !myNation?.forgeComplete) return;
     if (waitingForTableOpen) return;
@@ -1542,13 +1544,17 @@ export default function NationForgeBoard() {
       await submitOpeningBrief();
     })();
   }, [
-    session,
+    session?.id,
+    session?.updatedAt,
+    session?.gameStarted,
+    session?.crisis?.id,
+    session?.viewerNationId,
+    session?.gmMessages?.length,
     seatToken,
     myNation?.forgeComplete,
     waitingForTableOpen,
     lastGmChapter,
     gmStreamText,
-    session?.gmMessages,
     viewerGmStreaming,
     submitOpeningBrief,
   ]);
