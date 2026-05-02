@@ -138,8 +138,14 @@ export default function NationForgeWizard({
         if (!res.ok) throw new Error(j.error ?? res.statusText);
         await onDone();
         if (body.type === "finalize") {
-          rememberNationForgeSeat(sessionId, nation.id, token);
-          router.replace(`/nationforge/${sessionId}?token=${encodeURIComponent(token)}`);
+          rememberNationForgeSeat(sessionId, nation.id, token, {
+            nationName: nation.name,
+          });
+          const href = `/nationforge/${sessionId}?token=${encodeURIComponent(token)}`;
+          const current = `${window.location.pathname}${window.location.search}`;
+          if (current !== href) {
+            router.replace(href);
+          }
         }
       } catch (e) {
         setErr(e instanceof Error ? e.message : "Request failed");

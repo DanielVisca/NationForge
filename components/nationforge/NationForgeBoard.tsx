@@ -171,7 +171,11 @@ function playSnapshotForPollDedupe(s: PublicGameSession): string {
   const gmRev = gm.length
     ? `${gm.length}:${typeof gm.at(-1)?.id === "string" ? gm.at(-1)!.id : ""}`
     : "0:";
-  return `${s.updatedAt}|${statsKey}|${impactsTail}|${gmRev}`;
+  const rosterForge = (s.nationRoster ?? [])
+    .map((r) => `${r.id}:${r.forgeComplete ? 1 : 0}`)
+    .join(",");
+  const life = `${s.gameStarted ? 1 : 0}|${s.phase}|${s.crisis?.id ?? ""}|${s.activeNationId ?? ""}|${rosterForge}`;
+  return `${s.updatedAt}|${life}|${statsKey}|${impactsTail}|${gmRev}`;
 }
 
 function aggregateLatestImpact(

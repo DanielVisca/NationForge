@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { UIMessage } from "ai";
 
@@ -26,6 +26,65 @@ type StoreFile = {
 const DATA_DIR = path.join(process.cwd(), ".data");
 const STORE_PATH = path.join(DATA_DIR, "nationforge-sessions.json");
 const MAX_NATIONS_PER_SESSION = 12;
+
+/**
+ * Serializes all JSON store mutations so concurrent finalize / turn / tool writes
+ * cannot read stale snapshots and overwrite each other (lost-update on the file).
+ */
+let storeWriteChain: Promise<unknown> = Promise.resolve();
+
+async function withLockedStore<T>(task: () => Promise<T>): Promise<T> {
+  const next = storeWriteChain.then(() => task());
+  storeWriteChain = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+function applySessionToStoreFile(store: StoreFile, session: GameSession): void {
+  const prev = store.sessions[session.id];
+  if (prev && prev.roomCode !== session.roomCode) {
+    delete store.roomIndex[prev.roomCode];
+    store.roomIndex[session.roomCode] = session.id;
+  } else if (!prev) {
+    store.roomIndex[session.roomCode] = session.id;
+  }
+  store.sessions[session.id] = session;
+}
+
+export type MutateSessionResult =
+  | { ok: false; status: number; message: string }
+  | { ok: true; session: GameSession };
+
+/**
+ * Read–mutate–write one session under the global store lock. `fn` receives a
+ * migrated clone; return `next` to persist (full replacement for that session row).
+ */
+export async function mutateSessionExclusive(
+  sessionId: string,
+  fn: (
+    s: GameSession,
+  ) =>
+    | MutateSessionResult
+    | Promise<MutateSessionResult>,
+): Promise<MutateSessionResult> {
+  return withLockedStore(async (): Promise<MutateSessionResult> => {
+    const store = await readStore();
+    const raw = store.sessions[sessionId];
+    if (!raw) {
+      return { ok: false, status: 404, message: "Not found" };
+    }
+    const s = migrateSession({ ...raw });
+    const r = await Promise.resolve(fn(s));
+    if (!r.ok) return r;
+    const session = migrateSession(r.session);
+    session.updatedAt = new Date().toISOString();
+    applySessionToStoreFile(store, session);
+    await writeStore(store);
+    return { ok: true, session };
+  });
+}
 
 const COMPLETED_TOOL_STATES = new Set(["output-available", "output-error"]);
 const PUBLIC_GM_TOOL_PARTS = new Set([
@@ -110,42 +169,56 @@ async function readStore(): Promise<StoreFile> {
 
 async function writeStore(store: StoreFile): Promise<void> {
   await ensureDataDir();
-  await writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf-8");
+  const json = JSON.stringify(store, null, 2);
+  const tmp = path.join(DATA_DIR, `nf-${randomUUID()}.tmp.json`);
+  try {
+    await writeFile(tmp, json, "utf-8");
+    await rename(tmp, STORE_PATH);
+  } catch (e) {
+    try {
+      await unlink(tmp);
+    } catch {
+      /* ignore */
+    }
+    throw e;
+  }
 }
 
 export async function createGameSession(): Promise<GameSession> {
-  const store = await readStore();
-  const id = randomUUID();
-  let roomCode = randomRoomCode();
-  while (store.roomIndex[roomCode]) {
-    roomCode = randomRoomCode();
-  }
-  const now = new Date().toISOString();
-  const session: GameSession = {
-    id,
-    roomCode,
-    createdAt: now,
-    updatedAt: now,
-    promptVersion: 1,
-    phase: "lobby",
-    gameStarted: false,
-    roundIndex: 0,
-    activeNationId: "",
-    nations: [],
-    crisis: null,
-    turnLog: [],
-    secrets: [],
-    seatTokens: {},
-    gmMessagesByNationId: {},
-    diplomaticOutreach: [],
-    emergentEvents: [],
-    statImpacts: [],
-    tableEvents: [],
-  };
-  store.sessions[id] = session;
-  store.roomIndex[roomCode] = id;
-  await writeStore(store);
-  return session;
+  return withLockedStore(async () => {
+    const store = await readStore();
+    const id = randomUUID();
+    let roomCode = randomRoomCode();
+    while (store.roomIndex[roomCode]) {
+      roomCode = randomRoomCode();
+    }
+    const now = new Date().toISOString();
+    const session: GameSession = {
+      id,
+      roomCode,
+      createdAt: now,
+      updatedAt: now,
+      promptVersion: 1,
+      phase: "lobby",
+      gameStarted: false,
+      roundIndex: 0,
+      activeNationId: "",
+      nations: [],
+      crisis: null,
+      turnLog: [],
+      secrets: [],
+      seatTokens: {},
+      gmMessagesByNationId: {},
+      diplomaticOutreach: [],
+      emergentEvents: [],
+      statImpacts: [],
+      tableEvents: [],
+    };
+    store.sessions[id] = session;
+    store.roomIndex[roomCode] = id;
+    await writeStore(store);
+    return session;
+  });
 }
 
 export async function registerNation(
@@ -155,65 +228,67 @@ export async function registerNation(
   | { ok: true; sessionId: string; nationId: string; token: string; name: string }
   | { ok: false; error: string }
 > {
-  const store = await readStore();
-  const sessionId = store.roomIndex[roomCode.trim().toUpperCase()];
-  if (!sessionId) return { ok: false, error: "Room not found" };
-  const raw = store.sessions[sessionId];
-  if (!raw) return { ok: false, error: "Room not found" };
-  const session = migrateSession(raw);
+  return withLockedStore(async () => {
+    const store = await readStore();
+    const sessionId = store.roomIndex[roomCode.trim().toUpperCase()];
+    if (!sessionId) return { ok: false, error: "Room not found" };
+    const raw = store.sessions[sessionId];
+    if (!raw) return { ok: false, error: "Room not found" };
+    const session = migrateSession(raw);
 
-  if (session.nations.length >= MAX_NATIONS_PER_SESSION) {
-    return { ok: false, error: "Room is full (12 nations max)." };
-  }
+    if (session.nations.length >= MAX_NATIONS_PER_SESSION) {
+      return { ok: false, error: "Room is full (12 nations max)." };
+    }
 
-  const trimmed = displayName.trim().slice(0, 80);
-  const nationId = randomUUID();
-  const token = randomUUID();
-  const provisionalName = trimmed || `Unnamed seat ${nationId.slice(0, 4)}`;
+    const trimmed = displayName.trim().slice(0, 80);
+    const nationId = randomUUID();
+    const token = randomUUID();
+    const provisionalName = trimmed || `Unnamed seat ${nationId.slice(0, 4)}`;
 
-  const nation: Nation = {
-    id: nationId,
-    name: provisionalName,
-    buildNotes: "Nation forge in progress — finish the builder to take turns.",
-    domesticScratch: "",
-    stats: defaultStats(),
-    reserve: 0,
-    forgeComplete: false,
-    forgeProgress: {
-      stepIndex: 0,
-      selections: { demographicsAddons: [] },
-      forgeWizardVersion: 2,
-    },
-  };
+    const nation: Nation = {
+      id: nationId,
+      name: provisionalName,
+      buildNotes: "Nation forge in progress — finish the builder to take turns.",
+      domesticScratch: "",
+      stats: defaultStats(),
+      reserve: 0,
+      forgeComplete: false,
+      forgeProgress: {
+        stepIndex: 0,
+        selections: { demographicsAddons: [] },
+        forgeWizardVersion: 2,
+      },
+    };
 
-  const next: GameSession = {
-    ...session,
-    nations: [...session.nations, nation],
-    seatTokens: { ...session.seatTokens, [nationId]: token },
-    gmMessagesByNationId: {
-      ...session.gmMessagesByNationId,
-      [nationId]: [],
-    },
-    phase:
-      session.phase === "lobby"
-        ? "nation_forge"
-        : session.phase === "player_input" ||
-            session.phase === "awaiting_decision" ||
-            session.phase === "gm_running"
-          ? session.phase
-          : "nation_forge",
-    activeNationId: session.activeNationId || nationId,
-  };
+    const next: GameSession = {
+      ...session,
+      nations: [...session.nations, nation],
+      seatTokens: { ...session.seatTokens, [nationId]: token },
+      gmMessagesByNationId: {
+        ...session.gmMessagesByNationId,
+        [nationId]: [],
+      },
+      phase:
+        session.phase === "lobby"
+          ? "nation_forge"
+          : session.phase === "player_input" ||
+              session.phase === "awaiting_decision" ||
+              session.phase === "gm_running"
+            ? session.phase
+            : "nation_forge",
+      activeNationId: session.activeNationId || nationId,
+    };
 
-  store.sessions[sessionId] = next;
-  await writeStore(store);
-  return {
-    ok: true,
-    sessionId,
-    nationId,
-    token,
-    name: provisionalName,
-  };
+    store.sessions[sessionId] = next;
+    await writeStore(store);
+    return {
+      ok: true,
+      sessionId,
+      nationId,
+      token,
+      name: provisionalName,
+    };
+  });
 }
 
 export async function getGameSession(
@@ -233,32 +308,29 @@ export async function getSessionIdByRoomCode(
 }
 
 export async function saveGameSession(session: GameSession): Promise<void> {
-  const store = await readStore();
-  const prev = store.sessions[session.id];
-  if (prev && prev.roomCode !== session.roomCode) {
-    delete store.roomIndex[prev.roomCode];
-    store.roomIndex[session.roomCode] = session.id;
-  } else if (!prev) {
-    store.roomIndex[session.roomCode] = session.id;
-  }
-  session.updatedAt = new Date().toISOString();
-  store.sessions[session.id] = session;
-  await writeStore(store);
+  await withLockedStore(async () => {
+    const store = await readStore();
+    session.updatedAt = new Date().toISOString();
+    applySessionToStoreFile(store, session);
+    await writeStore(store);
+  });
 }
 
 export async function updateGameSession(
   id: string,
   mutator: (s: GameSession) => void,
 ): Promise<GameSession | undefined> {
-  const store = await readStore();
-  const raw = store.sessions[id];
-  if (!raw) return undefined;
-  const s = migrateSession(raw);
-  mutator(s);
-  s.updatedAt = new Date().toISOString();
-  store.sessions[id] = s;
-  await writeStore(store);
-  return s;
+  return withLockedStore(async () => {
+    const store = await readStore();
+    const raw = store.sessions[id];
+    if (!raw) return undefined;
+    const s = migrateSession(raw);
+    mutator(s);
+    s.updatedAt = new Date().toISOString();
+    store.sessions[id] = s;
+    await writeStore(store);
+    return s;
+  });
 }
 
 /** Strip secret contents for LAN spectators; reveal only viewer nation's secrets when token matches. */
