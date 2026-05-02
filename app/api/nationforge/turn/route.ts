@@ -48,6 +48,33 @@ function nationFinishesGmStream(session: GameSession, povId: string): GameSessio
   };
 }
 
+/** Pop trailing queued user turn for `pov` and clear streaming slot (e.g. stream never started / onFinish threw). */
+async function rollbackOngoingGmTurn(
+  sessionId: string,
+  povNationId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await mutateSessionExclusive(sessionId, (s) => {
+      const msgs = [...getNationGmMessages(s, povNationId)];
+      const last = msgs[msgs.length - 1];
+      if (last?.role === "user") {
+        msgs.pop();
+      }
+      const patched: GameSession = {
+        ...s,
+        gmMessagesByNationId: {
+          ...s.gmMessagesByNationId,
+          [povNationId]: msgs,
+        },
+      };
+      return { ok: true, session: nationFinishesGmStream(patched, povNationId) };
+    });
+  } catch (e) {
+    console.error(`[nationforge/turn] rollback after ${reason} failed`, e);
+  }
+}
+
 const GM_MAX_OUTPUT_TOKENS = 5500;
 const GM_CONTINUATION_MAX_OUTPUT_TOKENS = 1200;
 
@@ -244,87 +271,106 @@ export async function POST(req: Request) {
     queued.lastGmResponseIdByNationId?.[pov] ?? queued.lastGmResponseId;
   const usePreviousResponse = Boolean(lastResponseId);
 
-  const fullModelMessages = await convertToModelMessages(allMessages, {
-    tools,
-  });
+  try {
+    const fullModelMessages = await convertToModelMessages(allMessages, {
+      tools,
+    });
 
-  const fresh = queued;
-  const result = streamText({
-    model: xai.responses(defaultModelId),
-    system: buildGmSystemPrompt(fresh, pov),
-    messages: fullModelMessages,
-    tools,
-    maxOutputTokens: GM_MAX_OUTPUT_TOKENS,
-    stopWhen: stepCountIs(15),
-    timeout: 360_000,
-    prepareStep: async ({ stepNumber, steps }) => {
-      if (stepNumber === 0 && usePreviousResponse) {
-        return {
-          messages: sliceFromLastUser(fullModelMessages),
-          providerOptions: {
-            xai: { previousResponseId: lastResponseId },
-          },
-        };
-      }
-      if (stepNumber > 0) {
-        const rid = steps[stepNumber - 1]?.response?.id;
-        if (rid) {
+    const fresh = queued;
+    const result = streamText({
+      model: xai.responses(defaultModelId),
+      system: buildGmSystemPrompt(fresh, pov),
+      messages: fullModelMessages,
+      tools,
+      maxOutputTokens: GM_MAX_OUTPUT_TOKENS,
+      stopWhen: stepCountIs(15),
+      timeout: 360_000,
+      prepareStep: async ({ stepNumber, steps }) => {
+        if (stepNumber === 0 && usePreviousResponse) {
           return {
+            messages: sliceFromLastUser(fullModelMessages),
             providerOptions: {
-              xai: { previousResponseId: rid },
+              xai: { previousResponseId: lastResponseId },
             },
           };
         }
-      }
-      return undefined;
-    },
-  });
-
-  return result.toUIMessageStreamResponse({
-    originalMessages: allMessages,
-    onFinish: async ({ messages, isAborted }) => {
-      if (isAborted) {
-        const s = await getGameSession(body.sessionId);
-        if (!s) return;
-        const msgs = [...getNationGmMessages(s, pov)];
-        const last = msgs[msgs.length - 1];
-        if (last?.role === "user") {
-          msgs.pop();
+        if (stepNumber > 0) {
+          const rid = steps[stepNumber - 1]?.response?.id;
+          if (rid) {
+            return {
+              providerOptions: {
+                xai: { previousResponseId: rid },
+              },
+            };
+          }
         }
-        const patched = {
-          ...s,
-          gmMessagesByNationId: { ...s.gmMessagesByNationId, [pov]: msgs },
-        };
-        await saveGameSession(nationFinishesGmStream(patched, pov));
-        return;
-      }
-      const steps = await result.steps;
-      const lastFinishReason = steps.at(-1)?.finishReason;
-      const finalMessages =
-        lastFinishReason === "length" ||
-        proseLooksIncomplete(lastAssistantTextProseFromMessages(messages))
-          ? await completeCutOffGmProse({
-              sessionId: body.sessionId,
-              povNationId: pov,
-              messages,
-            })
-          : messages;
-      await replaceNationGmMessages(body.sessionId, pov, finalMessages);
-      const newId = steps.at(-1)?.response?.id;
-      const s = await getGameSession(body.sessionId);
-      if (!s) return;
-      await saveGameSession(
-        nationFinishesGmStream(
-          {
-            ...s,
-            lastGmResponseIdByNationId: {
-              ...(s.lastGmResponseIdByNationId ?? {}),
-              [pov]: newId,
-            },
-          },
-          pov,
-        ),
-      );
-    },
-  });
+        return undefined;
+      },
+    });
+
+    return result.toUIMessageStreamResponse({
+      originalMessages: allMessages,
+      onFinish: async ({ messages, isAborted }) => {
+        try {
+          if (isAborted) {
+            const s = await getGameSession(body.sessionId);
+            if (!s) return;
+            const msgs = [...getNationGmMessages(s, pov)];
+            const last = msgs[msgs.length - 1];
+            if (last?.role === "user") {
+              msgs.pop();
+            }
+            const patched = {
+              ...s,
+              gmMessagesByNationId: { ...s.gmMessagesByNationId, [pov]: msgs },
+            };
+            await saveGameSession(nationFinishesGmStream(patched, pov));
+            return;
+          }
+          const steps = await result.steps;
+          const lastFinishReason = steps.at(-1)?.finishReason;
+          const finalMessages =
+            lastFinishReason === "length" ||
+            proseLooksIncomplete(lastAssistantTextProseFromMessages(messages))
+              ? await completeCutOffGmProse({
+                  sessionId: body.sessionId,
+                  povNationId: pov,
+                  messages,
+                })
+              : messages;
+          await replaceNationGmMessages(body.sessionId, pov, finalMessages);
+          const newId = steps.at(-1)?.response?.id;
+          const s = await getGameSession(body.sessionId);
+          if (!s) return;
+          await saveGameSession(
+            nationFinishesGmStream(
+              {
+                ...s,
+                lastGmResponseIdByNationId: {
+                  ...(s.lastGmResponseIdByNationId ?? {}),
+                  [pov]: newId,
+                },
+              },
+              pov,
+            ),
+          );
+        } catch (e) {
+          console.error("[nationforge/turn] onFinish error", e);
+          await rollbackOngoingGmTurn(body.sessionId, pov, "onFinish");
+        }
+      },
+    });
+  } catch (e) {
+    console.error("[nationforge/turn] stream setup failed", e);
+    await rollbackOngoingGmTurn(body.sessionId, pov, "stream-setup");
+    return NextResponse.json(
+      {
+        error:
+          e instanceof Error
+            ? e.message
+            : "GM stream failed to start — try again in a moment.",
+      },
+      { status: 502 },
+    );
+  }
 }
