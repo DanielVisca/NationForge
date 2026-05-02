@@ -35,9 +35,11 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} ${nunitoPlayful.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col font-sans">
+      {/* displayPrefsInlineBootScript mutates <html> (dark class, data-*) before React hydrates */}
+      <body className="min-h-full flex flex-col font-sans" suppressHydrationWarning>
         <script
           dangerouslySetInnerHTML={{ __html: displayPrefsInlineBootScript() }}
         />
