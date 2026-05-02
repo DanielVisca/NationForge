@@ -1432,13 +1432,17 @@ export default function NationForgeBoard() {
                       </div>
                       <div>
                         <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                          Stat / reserve asks (max 10 pts movement per nation)
+                          Future stat / reserve reallocation (optional, max 10 pts movement)
                         </label>
+                        <p className="mt-0.5 text-[11px] text-zinc-500">
+                          Ask the GM to spend reserve or shift emphasis in future
+                          rounds; fiction still decides whether numbers move.
+                        </p>
                         <textarea
                           className="mt-1 min-h-[2.5rem] w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
                           value={reallocNotes}
                           onChange={(e) => setReallocNotes(e.target.value)}
-                          placeholder="e.g. spend reserve on counter-intel…"
+                          placeholder="e.g. spend 4 reserve on counter-intel, or shift emphasis from power toward innovation…"
                           disabled={!session.gameStarted}
                         />
                       </div>

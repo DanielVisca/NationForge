@@ -184,7 +184,7 @@ export function formatPlayerTurnMessage(
     lines.push("", `Secret action: ${p.secretAction.trim()}`);
   }
   if (p.reallocNotes?.trim()) {
-    lines.push("", `Re-allocation notes: ${p.reallocNotes.trim()}`);
+    lines.push("", `Future stat / reserve reallocation ask: ${p.reallocNotes.trim()}`);
   }
   return lines.join("\n");
 }
@@ -204,6 +204,7 @@ export function playerTurnChatDisplayBody(formattedTurnText: string): string {
     "\n\nActive crisis (player answered in prose above):",
     "\n\nPublic diplomacy:",
     "\n\nSecret action:",
+    "\n\nFuture stat / reserve reallocation ask:",
     "\n\nRe-allocation notes:",
   ];
   let cut = Infinity;
