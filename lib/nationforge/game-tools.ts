@@ -126,7 +126,7 @@ export function createNationForgeTools(sessionId: string) {
 
   const set_inflection = tool({
     description:
-      "Set the single next table crisis / inflection (one call per resolution). Use a vivid prompt players read in the UI; pick any in-world timing or situation you want. Prefer 4–6 internal options with stable string ids and allowCustom true for bookkeeping — players answer in open prose and are not shown option labels.",
+      "Set the single next table event / inflection (one call per resolution). Use a vivid prompt players read in the UI; the event can be random, positive, negative, mixed, quiet, or explosive: boom, crisis, rebellion, discovery, scandal, diplomacy, disaster, opportunity, etc. Prefer a few internal options with stable string ids and allowCustom true for bookkeeping — players answer in open prose and are not shown option labels.",
     inputSchema: z.object({
       prompt: z.string(),
       options: z
@@ -166,7 +166,7 @@ export function createNationForgeTools(sessionId: string) {
 
   const declare_emergent_event = tool({
     description:
-      "Introduce a random or semi-random emergent world event (new faction, disaster, discovery, coup, etc.). Only when it feels organic — not every turn. Does not change stats; use apply_stat_deltas if numbers move. Logged for future GM context.",
+      "Introduce a random or semi-random emergent world event (boom, crisis, rebellion, new faction, disaster, discovery, coup, scandal, migration, etc.). Use when a random beat should be logged for future context. Does not change stats; use apply_stat_deltas if numbers move.",
     inputSchema: z.object({
       eventTitle: z.string().describe("Short headline for logs and UI"),
       description: z.string().describe("What happened in the fiction"),
