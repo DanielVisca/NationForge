@@ -17,6 +17,7 @@ import type { NationForgeSessionSummary } from "./session-summary";
 import {
   logNationForgePersistenceOnce,
   nationForgePersistenceKindFromEnv,
+  readNationForgeDatabaseUrl,
 } from "./store-backend";
 import { createLocalSnapshotPersistence } from "./store-local-snapshot";
 import { createPostgresSnapshotPersistence } from "./store-pg-snapshot";
@@ -31,7 +32,7 @@ function getPersistence(): NationForgeSnapshotPersistence {
     logNationForgePersistenceOnce(kind);
     persistence =
       kind === "postgres"
-        ? createPostgresSnapshotPersistence(process.env.DATABASE_URL!.trim())
+        ? createPostgresSnapshotPersistence(readNationForgeDatabaseUrl()!)
         : createLocalSnapshotPersistence();
   }
   return persistence;
