@@ -1,11 +1,27 @@
 import type { Nation } from "./schema";
 import { STAT_KEYS } from "./schema";
 
+const OPENING_BEAT_TAG = "[NationForge — opening beat:";
+
+/**
+ * True for the auto-sent first-turn wire message (persisted as `user` for the GM
+ * thread). Chat and public session payloads should hide this row.
+ */
+export function isOpeningBriefWireMessage(formattedTurnText: string): boolean {
+  const t = formattedTurnText.trim();
+  if (!t) return false;
+  const withoutPov = t.replace(/^POV:\s*[^\n]+\n\n?/i, "").trim();
+  if (withoutPov.includes(OPENING_BEAT_TAG)) return true;
+  return withoutPov.includes(
+    "(orientationRequest: first opening beat — crisis choice deferred)",
+  );
+}
+
 /** Player-authored payload text for the first GM call after the table opens. */
 export function buildOpeningBriefPlayerMessage(nation: Nation): string {
   const statLines = STAT_KEYS.map((k) => `${k}: ${nation.stats[k]}`).join("\n");
   return [
-    "[NationForge — opening beat: first fifty years, then first event]",
+    `${OPENING_BEAT_TAG} first fifty years, then first event]`,
     "",
     `POV nation: ${nation.name}`,
     `Reserve: ${nation.reserve}`,

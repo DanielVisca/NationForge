@@ -31,7 +31,10 @@ import {
   type XaiTtsVoiceId,
 } from "@/lib/nationforge/tts-voices";
 import { consumeGmTextStream } from "@/lib/nationforge/consume-gm-stream";
-import { buildOpeningBriefPlayerMessage } from "@/lib/nationforge/opening-brief-narrative";
+import {
+  buildOpeningBriefPlayerMessage,
+  isOpeningBriefWireMessage,
+} from "@/lib/nationforge/opening-brief-narrative";
 import { playerTurnChatDisplayBody } from "@/lib/nationforge/player-input";
 import type {
   PublicEmergentEvent,
@@ -1853,11 +1856,12 @@ export default function NationForgeBoard() {
             The table is opening with a GM-written **First 50 Years** history,
             strengths and weaknesses, then the **first decisive event** (any year
             or flavor the GM chooses). Your stats and build below are what the
-            sim locked in. You answer that first event in open prose once it
-            appears in chat.
+            sim locked in.             You answer that first event in open prose once it
+            appears in chat. The automated request to the GM is not shown as a
+            message from you.
           </p>
           <div className="mt-4 ring-2 ring-amber-400/30 ring-offset-2 ring-offset-amber-50 dark:ring-amber-700/40 dark:ring-offset-zinc-950">
-            <NationCard nation={myNation} isViewer />
+            <NationCard nation={myNation} isViewer prominentForgeBriefing />
           </div>
           {busy || viewerGmStreaming || gmStreamText.length > 0 ? (
             <p className="mt-4 text-sm font-medium text-amber-950 dark:text-amber-100">
@@ -1894,6 +1898,25 @@ export default function NationForgeBoard() {
               }`}
             >
               <h2 className="sr-only">NationForge chat</h2>
+              {seatPovLocked && myNation ? (
+                <div className="rounded-xl border border-indigo-200/80 bg-indigo-50/50 px-4 py-3 dark:border-indigo-900/45 dark:bg-indigo-950/30">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-800 dark:text-indigo-200">
+                    Your nation brief
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                    Locked-in forge profile and briefing — same reference as
+                    before the table opened.
+                  </p>
+                  <div className="mt-3">
+                    <NationCard
+                      nation={myNation}
+                      isViewer
+                      compact
+                      prominentForgeBriefing
+                    />
+                  </div>
+                </div>
+              ) : null}
               {peerJoinNotice ? (
                 <div
                   className="rounded-lg border border-sky-200 bg-sky-50/95 px-3 py-2 text-sm text-sky-950 dark:border-sky-900/50 dark:bg-sky-950/35 dark:text-sky-100"
@@ -2063,6 +2086,7 @@ export default function NationForgeBoard() {
                   }`;
                   if (m.role === "user") {
                     const raw = userMessageTextParts(m);
+                    if (isOpeningBriefWireMessage(raw)) return null;
                     const body = playerTurnChatDisplayBody(raw);
                     if (!body.trim()) return null;
                     return (
@@ -2632,10 +2656,13 @@ function NationCard({
   nation,
   isViewer,
   compact,
+  prominentForgeBriefing,
 }: {
   nation: Nation;
   isViewer?: boolean;
   compact?: boolean;
+  /** Show forge briefing markdown expanded (not buried in &lt;details&gt;). */
+  prominentForgeBriefing?: boolean;
 }) {
   const entries = Object.entries(nation.stats) as [string, number][];
   return (
@@ -2686,14 +2713,25 @@ function NationCard({
         </>
       ) : null}
       {nation.forgeBriefingMarkdown?.trim() ? (
-        <details className="mt-3">
-          <summary className="cursor-pointer text-xs font-medium text-indigo-600 dark:text-indigo-400">
-            Forge briefing (Markdown)
-          </summary>
-          <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-zinc-200/80 bg-white/90 p-2 dark:border-zinc-700 dark:bg-zinc-950/80">
-            <NationForgeChatMarkdown source={nation.forgeBriefingMarkdown} />
+        prominentForgeBriefing ? (
+          <div className="mt-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">
+              Forge briefing
+            </p>
+            <div className="mt-2 max-h-72 overflow-y-auto rounded-lg border border-zinc-200/80 bg-white/90 p-3 dark:border-zinc-700 dark:bg-zinc-950/80">
+              <NationForgeChatMarkdown source={nation.forgeBriefingMarkdown} />
+            </div>
           </div>
-        </details>
+        ) : (
+          <details className="mt-3">
+            <summary className="cursor-pointer text-xs font-medium text-indigo-600 dark:text-indigo-400">
+              Forge briefing (Markdown)
+            </summary>
+            <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-zinc-200/80 bg-white/90 p-2 dark:border-zinc-700 dark:bg-zinc-950/80">
+              <NationForgeChatMarkdown source={nation.forgeBriefingMarkdown} />
+            </div>
+          </details>
+        )
       ) : null}
     </div>
   );

@@ -75,8 +75,32 @@ async function rollbackOngoingGmTurn(
   }
 }
 
-const GM_MAX_OUTPUT_TOKENS = 5500;
-const GM_CONTINUATION_MAX_OUTPUT_TOKENS = 1200;
+function intEnv(name: string, fallback: number, min: number, max: number): number {
+  const raw = process.env[name];
+  const n = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Primary GM stream; default high so we do not clip below provider limits (override via env). */
+const GM_MAX_OUTPUT_TOKENS = intEnv(
+  "NATIONFORGE_GM_MAX_OUTPUT_TOKENS",
+  65536,
+  4096,
+  131072,
+);
+const GM_CONTINUATION_MAX_OUTPUT_TOKENS = intEnv(
+  "NATIONFORGE_GM_CONTINUATION_MAX_OUTPUT_TOKENS",
+  32768,
+  1024,
+  131072,
+);
+const GM_CONTINUATION_MAX_ROUNDS = intEnv(
+  "NATIONFORGE_GM_CONTINUATION_MAX_ROUNDS",
+  8,
+  1,
+  24,
+);
 
 function clientIp(req: Request): string {
   const xf = req.headers.get("x-forwarded-for");
@@ -84,9 +108,17 @@ function clientIp(req: Request): string {
   return req.headers.get("x-real-ip") ?? "local";
 }
 
+function hasUnclosedMarkdownBoldTail(text: string): boolean {
+  const lines = text.trimEnd().split("\n");
+  const lastLine = lines[lines.length - 1] ?? "";
+  if (!lastLine.includes("**")) return false;
+  return ((lastLine.match(/\*\*/g) ?? []).length % 2 === 1);
+}
+
 function proseLooksIncomplete(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
+  if (hasUnclosedMarkdownBoldTail(trimmed)) return true;
   if (/[.!?…)"'\]]$/.test(trimmed)) return false;
   const tail = trimmed.toLowerCase().split(/\s+/).slice(-4).join(" ");
   return /(\bof|\bthe|\band|\bor|\bto|\bwith|\bfor|\bfrom|\bexports of)$/.test(
@@ -126,14 +158,12 @@ function appendAssistantProse(messages: UIMessage[], addition: string): UIMessag
   ];
 }
 
-async function completeCutOffGmProse(options: {
+async function completeCutOffGmProseOnce(options: {
   sessionId: string;
   povNationId: string;
   messages: UIMessage[];
 }): Promise<UIMessage[]> {
   const prose = lastAssistantTextProseFromMessages(options.messages);
-  if (!proseLooksIncomplete(prose)) return options.messages;
-
   const latest = await getGameSession(options.sessionId);
   if (!latest) return options.messages;
 
@@ -154,6 +184,34 @@ ${prose}`,
   } catch {
     return options.messages;
   }
+}
+
+/** Repeated continuation passes after token limit or incomplete tail. */
+async function completeCutOffGmProseLoop(options: {
+  sessionId: string;
+  povNationId: string;
+  messages: UIMessage[];
+  lastFinishReason: string | undefined;
+}): Promise<UIMessage[]> {
+  let msgs = options.messages;
+  for (let r = 0; r < GM_CONTINUATION_MAX_ROUNDS; r++) {
+    const prose = lastAssistantTextProseFromMessages(msgs);
+    const shouldRun =
+      r === 0
+        ? options.lastFinishReason === "length" || proseLooksIncomplete(prose)
+        : proseLooksIncomplete(prose);
+    if (!shouldRun) break;
+    const prevLen = prose.length;
+    const next = await completeCutOffGmProseOnce({
+      sessionId: options.sessionId,
+      povNationId: options.povNationId,
+      messages: msgs,
+    });
+    const nextProse = lastAssistantTextProseFromMessages(next);
+    if (nextProse.length <= prevLen) break;
+    msgs = next;
+  }
+  return msgs;
 }
 
 export async function POST(req: Request) {
@@ -285,7 +343,7 @@ export async function POST(req: Request) {
       messages: fullModelMessages,
       tools,
       maxOutputTokens: GM_MAX_OUTPUT_TOKENS,
-      stopWhen: stepCountIs(15),
+      stopWhen: stepCountIs(40),
       timeout: 360_000,
       prepareStep: async ({ stepNumber, steps }) => {
         if (stepNumber === 0 && usePreviousResponse) {
@@ -334,10 +392,11 @@ export async function POST(req: Request) {
           const finalMessages =
             lastFinishReason === "length" ||
             proseLooksIncomplete(lastAssistantTextProseFromMessages(messages))
-              ? await completeCutOffGmProse({
+              ? await completeCutOffGmProseLoop({
                   sessionId: body.sessionId,
                   povNationId: pov,
                   messages,
+                  lastFinishReason,
                 })
               : messages;
           await replaceNationGmMessages(body.sessionId, pov, finalMessages);

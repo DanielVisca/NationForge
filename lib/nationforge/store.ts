@@ -12,6 +12,7 @@ import type {
 } from "./public-types";
 import { STAT_KEYS } from "./schema";
 import { migrateSession } from "./session-migrate";
+import { isOpeningBriefWireMessage } from "./opening-brief-narrative";
 import { playerTurnChatDisplayBody } from "./player-input";
 import type { NationForgeSessionSummary } from "./session-summary";
 import {
@@ -101,7 +102,9 @@ function publicTextFromUiMessage(message: UIMessage): string {
 
 function sanitizeGmMessageForClient(message: UIMessage): UIMessage | null {
   if (message.role === "user") {
-    const publicBody = playerTurnChatDisplayBody(publicTextFromUiMessage(message));
+    const raw = publicTextFromUiMessage(message);
+    if (isOpeningBriefWireMessage(raw)) return null;
+    const publicBody = playerTurnChatDisplayBody(raw);
     if (!publicBody.trim()) return null;
     return {
       id: message.id,
