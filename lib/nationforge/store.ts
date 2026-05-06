@@ -1,8 +1,6 @@
 import "server-only";
 
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
 import type { UIMessage } from "ai";
 
 import type { GameSession, Nation, NationStats } from "./schema";
@@ -16,31 +14,30 @@ import { STAT_KEYS } from "./schema";
 import { migrateSession } from "./session-migrate";
 import { playerTurnChatDisplayBody } from "./player-input";
 import type { NationForgeSessionSummary } from "./session-summary";
+import {
+  logNationForgePersistenceOnce,
+  nationForgePersistenceKindFromEnv,
+} from "./store-backend";
+import { createLocalSnapshotPersistence } from "./store-local-snapshot";
+import { createPostgresSnapshotPersistence } from "./store-pg-snapshot";
+import type { NationForgeSnapshotPersistence } from "./store-snapshot-persistence";
+import type { StoreFile } from "./store-snapshot-types";
 
-type StoreFile = {
-  sessions: Record<string, GameSession>;
-  /** roomCode (uppercase) -> sessionId */
-  roomIndex: Record<string, string>;
-};
+let persistence: NationForgeSnapshotPersistence | null = null;
 
-const DATA_DIR = path.join(process.cwd(), ".data");
-const STORE_PATH = path.join(DATA_DIR, "nationforge-sessions.json");
-const MAX_NATIONS_PER_SESSION = 12;
-
-/**
- * Serializes all JSON store mutations so concurrent finalize / turn / tool writes
- * cannot read stale snapshots and overwrite each other (lost-update on the file).
- */
-let storeWriteChain: Promise<unknown> = Promise.resolve();
-
-async function withLockedStore<T>(task: () => Promise<T>): Promise<T> {
-  const next = storeWriteChain.then(() => task());
-  storeWriteChain = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  return next;
+function getPersistence(): NationForgeSnapshotPersistence {
+  if (!persistence) {
+    const kind = nationForgePersistenceKindFromEnv();
+    logNationForgePersistenceOnce(kind);
+    persistence =
+      kind === "postgres"
+        ? createPostgresSnapshotPersistence(process.env.DATABASE_URL!.trim())
+        : createLocalSnapshotPersistence();
+  }
+  return persistence;
 }
+
+const MAX_NATIONS_PER_SESSION = 12;
 
 function applySessionToStoreFile(store: StoreFile, session: GameSession): void {
   const prev = store.sessions[session.id];
@@ -69,8 +66,8 @@ export async function mutateSessionExclusive(
     | MutateSessionResult
     | Promise<MutateSessionResult>,
 ): Promise<MutateSessionResult> {
-  return withLockedStore(async (): Promise<MutateSessionResult> => {
-    const store = await readStore();
+  return getPersistence().withLockedStore(async (io): Promise<MutateSessionResult> => {
+    const store = await io.read();
     const raw = store.sessions[sessionId];
     if (!raw) {
       return { ok: false, status: 404, message: "Not found" };
@@ -81,7 +78,7 @@ export async function mutateSessionExclusive(
     const session = migrateSession(r.session);
     session.updatedAt = new Date().toISOString();
     applySessionToStoreFile(store, session);
-    await writeStore(store);
+    await io.write(store);
     return { ok: true, session };
   });
 }
@@ -154,39 +151,9 @@ function randomRoomCode(): string {
   return randomBytes(3).toString("hex").toUpperCase();
 }
 
-async function ensureDataDir(): Promise<void> {
-  await mkdir(DATA_DIR, { recursive: true });
-}
-
-async function readStore(): Promise<StoreFile> {
-  try {
-    const raw = await readFile(STORE_PATH, "utf-8");
-    return JSON.parse(raw) as StoreFile;
-  } catch {
-    return { sessions: {}, roomIndex: {} };
-  }
-}
-
-async function writeStore(store: StoreFile): Promise<void> {
-  await ensureDataDir();
-  const json = JSON.stringify(store, null, 2);
-  const tmp = path.join(DATA_DIR, `nf-${randomUUID()}.tmp.json`);
-  try {
-    await writeFile(tmp, json, "utf-8");
-    await rename(tmp, STORE_PATH);
-  } catch (e) {
-    try {
-      await unlink(tmp);
-    } catch {
-      /* ignore */
-    }
-    throw e;
-  }
-}
-
 export async function createGameSession(): Promise<GameSession> {
-  return withLockedStore(async () => {
-    const store = await readStore();
+  return getPersistence().withLockedStore(async (io) => {
+    const store = await io.read();
     const id = randomUUID();
     let roomCode = randomRoomCode();
     while (store.roomIndex[roomCode]) {
@@ -217,7 +184,7 @@ export async function createGameSession(): Promise<GameSession> {
     };
     store.sessions[id] = session;
     store.roomIndex[roomCode] = id;
-    await writeStore(store);
+    await io.write(store);
     return session;
   });
 }
@@ -229,8 +196,8 @@ export async function registerNation(
   | { ok: true; sessionId: string; nationId: string; token: string; name: string }
   | { ok: false; error: string }
 > {
-  return withLockedStore(async () => {
-    const store = await readStore();
+  return getPersistence().withLockedStore(async (io) => {
+    const store = await io.read();
     const sessionId = store.roomIndex[roomCode.trim().toUpperCase()];
     if (!sessionId) return { ok: false, error: "Room not found" };
     const raw = store.sessions[sessionId];
@@ -281,7 +248,7 @@ export async function registerNation(
     };
 
     store.sessions[sessionId] = next;
-    await writeStore(store);
+    await io.write(store);
     return {
       ok: true,
       sessionId,
@@ -295,7 +262,7 @@ export async function registerNation(
 export async function getGameSession(
   id: string,
 ): Promise<GameSession | undefined> {
-  const store = await readStore();
+  const store = await getPersistence().readSnapshot();
   const s = store.sessions[id];
   if (!s) return undefined;
   return migrateSession(s);
@@ -304,16 +271,16 @@ export async function getGameSession(
 export async function getSessionIdByRoomCode(
   code: string,
 ): Promise<string | undefined> {
-  const store = await readStore();
+  const store = await getPersistence().readSnapshot();
   return store.roomIndex[code.trim().toUpperCase()];
 }
 
 export async function saveGameSession(session: GameSession): Promise<void> {
-  await withLockedStore(async () => {
-    const store = await readStore();
+  await getPersistence().withLockedStore(async (io) => {
+    const store = await io.read();
     session.updatedAt = new Date().toISOString();
     applySessionToStoreFile(store, session);
-    await writeStore(store);
+    await io.write(store);
   });
 }
 
@@ -321,15 +288,15 @@ export async function updateGameSession(
   id: string,
   mutator: (s: GameSession) => void,
 ): Promise<GameSession | undefined> {
-  return withLockedStore(async () => {
-    const store = await readStore();
+  return getPersistence().withLockedStore(async (io) => {
+    const store = await io.read();
     const raw = store.sessions[id];
     if (!raw) return undefined;
     const s = migrateSession(raw);
     mutator(s);
     s.updatedAt = new Date().toISOString();
     store.sessions[id] = s;
-    await writeStore(store);
+    await io.write(store);
     return s;
   });
 }
@@ -466,7 +433,7 @@ export function filterSessionForClient(
 }
 
 export async function listGameSessions(): Promise<GameSession[]> {
-  const store = await readStore();
+  const store = await getPersistence().readSnapshot();
   return Object.values(store.sessions)
     .map((s) => migrateSession(s))
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));

@@ -12,12 +12,14 @@
   "dependencies": {
     "@ai-sdk/react": "^3.0.170",
     "@ai-sdk/xai": "^3.0.83",
+    "@neondatabase/serverless": "^1.1.0",
     "ai": "^6.0.168",
     "next": "16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
     "server-only": "^0.0.1",
+    "ws": "^8.20.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -25,6 +27,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",

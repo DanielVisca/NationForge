@@ -14,7 +14,7 @@ function cloneMessages(msgs: UIMessage[]): UIMessage[] {
 export function ensureGmMessagesByNationId(session: GameSession): GameSession {
   const nations = session.nations;
   const legacy = Array.isArray(session.gmMessages) ? session.gmMessages : [];
-  let byId: Record<string, UIMessage[]> = {
+  const byId: Record<string, UIMessage[]> = {
     ...(session.gmMessagesByNationId ?? {}),
   };
 
@@ -42,7 +42,7 @@ export function ensureGmMessagesByNationId(session: GameSession): GameSession {
     }
   }
 
-  let lastBy = { ...(session.lastGmResponseIdByNationId ?? {}) };
+  const lastBy = { ...(session.lastGmResponseIdByNationId ?? {}) };
   const lastSingle = session.lastGmResponseId;
   if (
     lastSingle &&
