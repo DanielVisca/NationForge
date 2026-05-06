@@ -67,6 +67,21 @@ const NATIONFORGE_TTS_LS = "nationforge-tts-enabled";
 const NATIONFORGE_TTS_VOICE_LS = "nationforge-tts-voice";
 const NATIONFORGE_TTS_RATE_LS = "nationforge-tts-playback-rate";
 
+function nationBriefOpenStorageKey(sessionId: string): string {
+  return `nationforge-nation-brief-open:${sessionId}`;
+}
+
+function readNationBriefOpenFromStorage(sessionId: string): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const v = localStorage.getItem(nationBriefOpenStorageKey(sessionId));
+    if (v === "0") return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 const TTS_PLAYBACK_RATE_PRESETS = [1, 1.1, 1.2] as const;
 type TtsPlaybackRatePreset = (typeof TTS_PLAYBACK_RATE_PRESETS)[number];
 
@@ -784,6 +799,11 @@ export default function NationForgeBoard() {
   useEffect(() => {
     ttsPlaybackRateRef.current = ttsPlaybackRate;
   }, [ttsPlaybackRate]);
+
+  const [nationBriefOpen, setNationBriefOpen] = useState(true);
+  useEffect(() => {
+    setNationBriefOpen(readNationBriefOpenFromStorage(sessionId));
+  }, [sessionId]);
 
   const [domesticDraft, setDomesticDraft] = useState("");
   const [domesticSaveState, setDomesticSaveState] = useState<
@@ -1899,23 +1919,55 @@ export default function NationForgeBoard() {
             >
               <h2 className="sr-only">NationForge chat</h2>
               {seatPovLocked && myNation ? (
-                <div className="rounded-xl border border-indigo-200/80 bg-indigo-50/50 px-4 py-3 dark:border-indigo-900/45 dark:bg-indigo-950/30">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-800 dark:text-indigo-200">
-                    Your nation brief
-                  </p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">
-                    Locked-in forge profile and briefing — same reference as
-                    before the table opened.
-                  </p>
-                  <div className="mt-3">
-                    <NationCard
-                      nation={myNation}
-                      isViewer
-                      compact
-                      prominentForgeBriefing
-                    />
+                <details
+                  className="nationforge-nation-brief group rounded-xl border border-indigo-200/80 bg-indigo-50/50 text-left dark:border-indigo-900/45 dark:bg-indigo-950/30"
+                  open={nationBriefOpen}
+                  onToggle={(e) => {
+                    const el = e.currentTarget;
+                    const next = el.open;
+                    setNationBriefOpen(next);
+                    try {
+                      localStorage.setItem(
+                        nationBriefOpenStorageKey(sessionId),
+                        next ? "1" : "0",
+                      );
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                  aria-label={`Nation brief for ${myNation.name}`}
+                >
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 outline-none ring-indigo-400/40 focus-visible:ring-2 [&::-webkit-details-marker]:hidden">
+                    <svg
+                      className="size-3 shrink-0 text-indigo-500 transition-transform group-open:rotate-90 dark:text-indigo-400"
+                      viewBox="0 0 12 12"
+                      fill="currentColor"
+                      aria-hidden
+                    >
+                      <path d="M4 2 L9 6 L4 10 Z" />
+                    </svg>
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-indigo-800 dark:text-indigo-200">
+                      Your nation brief
+                    </span>
+                    <span className="min-w-0 truncate text-xs font-medium text-zinc-800 dark:text-zinc-100">
+                      {myNation.name}
+                    </span>
+                  </summary>
+                  <div className="border-t border-indigo-200/70 px-4 pb-3 pt-2 dark:border-indigo-900/50">
+                    <p className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                      Locked-in forge profile and briefing — same reference as
+                      before the table opened.
+                    </p>
+                    <div className="mt-3">
+                      <NationCard
+                        nation={myNation}
+                        isViewer
+                        compact
+                        prominentForgeBriefing
+                      />
+                    </div>
                   </div>
-                </div>
+                </details>
               ) : null}
               {peerJoinNotice ? (
                 <div
