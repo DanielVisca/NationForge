@@ -13,6 +13,13 @@ export type StoredConversation = {
   updatedAt: string;
 };
 
+/** Sidebar / list API: small payload, safe to JSON.stringify. */
+export type ConversationListItem = {
+  id: string;
+  title: string;
+  updatedAt: string;
+};
+
 type StoreFile = {
   conversations: Record<string, StoredConversation>;
 };
@@ -27,10 +34,33 @@ async function ensureDataDir(): Promise<void> {
 async function readStore(): Promise<StoreFile> {
   try {
     const raw = await readFile(STORE_PATH, "utf-8");
-    return JSON.parse(raw) as StoreFile;
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("conversations" in parsed) ||
+      typeof (parsed as StoreFile).conversations !== "object" ||
+      (parsed as StoreFile).conversations === null
+    ) {
+      return { conversations: {} };
+    }
+    return parsed as StoreFile;
   } catch {
     return { conversations: {} };
   }
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+/** Old rows may have empty `id` on UI messages, which breaks React keys and reconciliation. */
+function withStableMessageIds(messages: UIMessage[]): UIMessage[] {
+  return messages.map((m, i) =>
+    typeof m.id === "string" && m.id.trim().length > 0
+      ? m
+      : { ...m, id: `legacy-${i}` },
+  );
 }
 
 async function writeStore(store: StoreFile): Promise<void> {
@@ -59,11 +89,33 @@ export async function listConversations(): Promise<StoredConversation[]> {
   );
 }
 
+export async function listConversationSummaries(): Promise<
+  ConversationListItem[]
+> {
+  const { conversations } = await readStore();
+  return Object.values(conversations)
+    .filter(
+      (c): c is StoredConversation =>
+        isRecord(c) &&
+        typeof c.id === "string" &&
+        c.id.trim().length > 0 &&
+        typeof c.title === "string" &&
+        typeof c.updatedAt === "string",
+    )
+    .map(({ id, title, updatedAt }) => ({ id, title, updatedAt }))
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
+
 export async function getConversation(
   id: string,
 ): Promise<StoredConversation | undefined> {
   const { conversations } = await readStore();
-  return conversations[id];
+  const row = conversations[id];
+  if (!row) return undefined;
+  return {
+    ...row,
+    messages: withStableMessageIds(row.messages ?? []),
+  };
 }
 
 export async function createConversation(): Promise<StoredConversation> {

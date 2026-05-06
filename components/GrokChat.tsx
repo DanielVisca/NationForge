@@ -2,7 +2,7 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type ConversationSummary = {
   id: string;
@@ -142,7 +142,12 @@ function ChatSession({
             Say hello to Grok. Tools: current time, add two numbers.
           </p>
         ) : (
-          messages.map((m) => <MessageBubble key={m.id} message={m} />)
+          messages.map((m, i) => (
+            <MessageBubble
+              key={`${i}-${m.id?.trim() ? m.id : "noid"}-${m.role}`}
+              message={m}
+            />
+          ))
         )}
       </div>
 
@@ -206,6 +211,8 @@ export function GrokChat() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [initialMessages, setInitialMessages] = useState<UIMessage[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = activeId;
 
   const refreshList = useCallback(async () => {
     const res = await fetch("/api/conversations");
@@ -214,18 +221,23 @@ export function GrokChat() {
     setList(data.conversations);
   }, []);
 
-  const loadConversation = useCallback(
-    async (id: string) => {
+  const loadConversation = useCallback(async (id: string) => {
+    const switchingAway = id !== activeIdRef.current;
+    if (switchingAway) {
       setHydrated(false);
-      const res = await fetch(`/api/conversations/${id}`);
-      if (!res.ok) return;
-      const data = (await res.json()) as { messages: UIMessage[] };
-      setInitialMessages(data.messages ?? []);
-      setActiveId(id);
-      setHydrated(true);
-    },
-    [],
-  );
+    }
+    const res = await fetch(`/api/conversations/${id}`);
+    if (!res.ok) {
+      if (switchingAway) {
+        setHydrated(true);
+      }
+      return;
+    }
+    const data = (await res.json()) as { messages: UIMessage[] };
+    setInitialMessages(data.messages ?? []);
+    setActiveId(id);
+    setHydrated(true);
+  }, []);
 
   const newChat = useCallback(async () => {
     const res = await fetch("/api/conversations", { method: "POST" });
@@ -278,7 +290,10 @@ export function GrokChat() {
               <li key={c.id}>
                 <button
                   type="button"
-                  onClick={() => void loadConversation(c.id)}
+                  onClick={() => {
+                    if (c.id === activeId && hydrated) return;
+                    void loadConversation(c.id);
+                  }}
                   className={`w-full rounded-lg px-2 py-2 text-left text-sm ${
                     c.id === activeId
                       ? "bg-white font-medium shadow-sm dark:bg-zinc-800"
