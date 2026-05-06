@@ -171,14 +171,6 @@ export function validatePlayerTurn(
         };
       }
     } else {
-      const involved = session.crisis.activeNationIds ?? [];
-      if (involved.length > 0 && !involved.includes(p.povNationId)) {
-        return {
-          ok: false,
-          error:
-            "This crisis beat is currently for other seat(s) only. Wait until the GM addresses your nation, or refresh if the table looks stuck.",
-        };
-      }
       /** Prose-only crisis answers: narrative alone is enough (optional explicit pick below). */
       if (p.crisisChoiceId) {
         const ok = session.crisis.options.some((o) => o.id === p.crisisChoiceId);
@@ -216,11 +208,15 @@ export function formatPlayerTurnMessage(
   }
   const hasExplicitCrisis =
     Boolean(p.crisisChoiceId?.trim()) || Boolean(p.customCrisisResponse?.trim());
+  const involved = session?.crisis?.activeNationIds ?? [];
+  const crisisWireForThisPov =
+    involved.length === 0 || involved.includes(p.povNationId);
   if (
     session?.phase === "awaiting_decision" &&
     session.crisis &&
     !p.orientationRequest &&
-    !hasExplicitCrisis
+    !hasExplicitCrisis &&
+    crisisWireForThisPov
   ) {
     const c = session.crisis;
     const prompt = c.prompt.trim();
