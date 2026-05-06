@@ -24,7 +24,14 @@ import {
   chunkTextForTts,
   markdownishToSpeechText,
 } from "@/lib/nationforge/markdown-ish-to-speech-text";
-import { createNationForgeTtsQueue } from "@/lib/nationforge/tts-queue";
+import {
+  appendGmStreamDeltaAndEnqueueParagraphTts,
+  flushGmStreamTailToTts,
+} from "@/lib/nationforge/gm-stream-paragraph-tts";
+import {
+  createNationForgeTtsQueue,
+  type NationForgeTtsPlaybackState,
+} from "@/lib/nationforge/tts-queue";
 import {
   normalizeXaiTtsVoiceId,
   XAI_TTS_VOICES,
@@ -776,8 +783,17 @@ export default function NationForgeBoard() {
     useState<TtsPlaybackRatePreset>(initialTtsPlaybackRate);
   const ttsVoiceIdRef = useRef<XaiTtsVoiceId>("eve");
   const ttsPlaybackRateRef = useRef<TtsPlaybackRatePreset>(ttsPlaybackRate);
+  const ttsEnabledRef = useRef(initialTtsEnabled());
+  const ttsStreamRawRef = useRef("");
+  const ttsStreamNormalizedFullRef = useRef<string | null>(null);
   const ttsQueueRef = useRef<ReturnType<typeof createNationForgeTtsQueue> | null>(
     null,
+  );
+  const ttsQueuePlaybackSinkRef = useRef<
+    ((s: NationForgeTtsPlaybackState) => void) | null
+  >(null);
+  const [ttsPlaybackUi, setTtsPlaybackUi] = useState<NationForgeTtsPlaybackState>(
+    () => ({ status: "idle", pendingCount: 0 }),
   );
   const ttsPrimedRef = useRef(false);
   const ttsSeenKeysRef = useRef<Set<string>>(new Set());
@@ -787,6 +803,11 @@ export default function NationForgeBoard() {
       ttsQueueRef.current = createNationForgeTtsQueue(
         () => ttsVoiceIdRef.current,
         () => ttsPlaybackRateRef.current,
+        {
+          onStateChange: (state) => {
+            ttsQueuePlaybackSinkRef.current?.(state);
+          },
+        },
       );
     }
     return ttsQueueRef.current;
@@ -799,6 +820,17 @@ export default function NationForgeBoard() {
   useEffect(() => {
     ttsPlaybackRateRef.current = ttsPlaybackRate;
   }, [ttsPlaybackRate]);
+
+  useEffect(() => {
+    ttsEnabledRef.current = ttsEnabled;
+  }, [ttsEnabled]);
+
+  useLayoutEffect(() => {
+    ttsQueuePlaybackSinkRef.current = setTtsPlaybackUi;
+    return () => {
+      ttsQueuePlaybackSinkRef.current = null;
+    };
+  }, []);
 
   const [nationBriefOpen, setNationBriefOpen] = useState(true);
   useEffect(() => {
@@ -1270,6 +1302,7 @@ export default function NationForgeBoard() {
     }
 
     const q = getTtsQueue();
+    const streamDedupeNorm = ttsStreamNormalizedFullRef.current;
     session.gmMessages.forEach((m, i) => {
       if (m.role !== "assistant") return;
       const prose = textProseFromAssistantUiMessage(m).trim();
@@ -1277,8 +1310,13 @@ export default function NationForgeBoard() {
       const id = typeof m.id === "string" && m.id ? m.id : `i-${i}`;
       const key = `gm:${id}`;
       if (ttsSeenKeysRef.current.has(key)) return;
-      ttsSeenKeysRef.current.add(key);
       const plain = markdownishToSpeechText(prose);
+      if (streamDedupeNorm && plain === streamDedupeNorm) {
+        ttsSeenKeysRef.current.add(key);
+        ttsStreamNormalizedFullRef.current = null;
+        return;
+      }
+      ttsSeenKeysRef.current.add(key);
       const gmChunks = chunkTextForTts(plain);
       for (const chunk of gmChunks) {
         q.enqueue(chunk);
@@ -1348,6 +1386,8 @@ export default function NationForgeBoard() {
     setBusy(true);
     setError(null);
     setGmStreamText("");
+    ttsStreamRawRef.current = "";
+    ttsStreamNormalizedFullRef.current = null;
     try {
       const res = await fetch("/api/nationforge/turn", {
         method: "POST",
@@ -1370,13 +1410,29 @@ export default function NationForgeBoard() {
         if (isBenignGmBusyError(errText)) {
           await load();
           setGmStreamText("");
+          ttsStreamRawRef.current = "";
+          ttsStreamNormalizedFullRef.current = null;
           return;
         }
         throw new Error(errText);
       }
-      await consumeGmTextStream(res, (d) => {
+      const q = getTtsQueue();
+      const full = await consumeGmTextStream(res, (d) => {
         setGmStreamText((x) => x + d);
+        appendGmStreamDeltaAndEnqueueParagraphTts(
+          ttsStreamRawRef,
+          d,
+          (chunk) => q.enqueue(chunk),
+          ttsEnabledRef.current,
+        );
       });
+      flushGmStreamTailToTts(ttsStreamRawRef, (chunk) => q.enqueue(chunk), ttsEnabledRef.current);
+      const normFull = markdownishToSpeechText(full.trim());
+      if (ttsEnabledRef.current && normFull) {
+        ttsStreamNormalizedFullRef.current = normFull;
+      } else {
+        ttsStreamNormalizedFullRef.current = null;
+      }
       setNarrative("");
       await load();
       setGmStreamText("");
@@ -1391,6 +1447,7 @@ export default function NationForgeBoard() {
     povNationId,
     narrative,
     load,
+    getTtsQueue,
   ]);
 
   const saveDomesticScratch = useCallback(
@@ -1541,6 +1598,8 @@ export default function NationForgeBoard() {
     setBusy(true);
     setError(null);
     setGmStreamText("");
+    ttsStreamRawRef.current = "";
+    ttsStreamNormalizedFullRef.current = null;
     try {
       const res = await fetch("/api/nationforge/turn", {
         method: "POST",
@@ -1562,6 +1621,8 @@ export default function NationForgeBoard() {
           `Rate limited — wait ~${wait}s. The opening will auto-retry after that (or refresh once).`,
         );
         setGmStreamText("");
+        ttsStreamRawRef.current = "";
+        ttsStreamNormalizedFullRef.current = null;
         return;
       }
       if (!res.ok) {
@@ -1570,13 +1631,29 @@ export default function NationForgeBoard() {
           openingBriefCooldownUntil = Date.now() + 5000;
           await load();
           setGmStreamText("");
+          ttsStreamRawRef.current = "";
+          ttsStreamNormalizedFullRef.current = null;
           return;
         }
         throw new Error(errText);
       }
-      await consumeGmTextStream(res, (d) => {
+      const q = getTtsQueue();
+      const full = await consumeGmTextStream(res, (d) => {
         setGmStreamText((x) => x + d);
+        appendGmStreamDeltaAndEnqueueParagraphTts(
+          ttsStreamRawRef,
+          d,
+          (chunk) => q.enqueue(chunk),
+          ttsEnabledRef.current,
+        );
       });
+      flushGmStreamTailToTts(ttsStreamRawRef, (chunk) => q.enqueue(chunk), ttsEnabledRef.current);
+      const normFull = markdownishToSpeechText(full.trim());
+      if (ttsEnabledRef.current && normFull) {
+        ttsStreamNormalizedFullRef.current = normFull;
+      } else {
+        ttsStreamNormalizedFullRef.current = null;
+      }
       await load();
       setGmStreamText("");
       openingBeatAutoKeySent = dedupeKey;
@@ -1586,7 +1663,7 @@ export default function NationForgeBoard() {
       openingBriefInFlight = false;
       setBusy(false);
     }
-  }, [sessionId, seatToken, load]);
+  }, [sessionId, seatToken, load, getTtsQueue]);
 
   /** Auto-fire opening brief once per crisis; deps use primitives so session poll identity does not retrigger every tick. */
   useEffect(() => {
@@ -2082,9 +2159,47 @@ export default function NationForgeBoard() {
                   </select>
                 </div>
                 {ttsEnabled ? (
-                  <span className="w-full text-[10px] text-zinc-500 sm:w-auto dark:text-zinc-400">
-                    New lines queue if speech is still playing.
-                  </span>
+                  <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    {ttsPlaybackUi.status !== "idle" ||
+                    ttsPlaybackUi.pendingCount > 0 ? (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {ttsPlaybackUi.status === "paused" ? (
+                          <button
+                            type="button"
+                            className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                            onClick={() => getTtsQueue().resume()}
+                            title="Resume reading aloud"
+                            aria-label="Resume GM dictation"
+                          >
+                            Resume
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                            onClick={() => getTtsQueue().pause()}
+                            title="Pause reading aloud"
+                            aria-label="Pause GM dictation"
+                          >
+                            Pause
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                          onClick={() => getTtsQueue().clear()}
+                          title="Stop and clear queued dictation"
+                          aria-label="Stop GM dictation"
+                        >
+                          Stop
+                        </button>
+                      </div>
+                    ) : null}
+                    <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                      Paragraphs start while the GM is still writing; more lines queue
+                      if speech is playing. Pause or stop anytime.
+                    </span>
+                  </div>
                 ) : null}
               </div>
               {impactBannerImpact ? (

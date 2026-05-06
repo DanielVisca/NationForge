@@ -1,16 +1,18 @@
 /**
  * Client-side: accumulate assistant-visible text from a `toUIMessageStreamResponse` body.
+ * Returns the full concatenated text-delta string for TTS dedupe and tail handling.
  */
 export async function consumeGmTextStream(
   response: Response,
   onDelta: (delta: string) => void,
-): Promise<void> {
+): Promise<string> {
   const body = response.body;
   if (!body) throw new Error("Empty response body");
 
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let accumulated = "";
 
   while (true) {
     const { done, value } = await reader.read();
@@ -27,6 +29,7 @@ export async function consumeGmTextStream(
         try {
           const parsed = JSON.parse(data) as { type?: string; delta?: string };
           if (parsed.type === "text-delta" && typeof parsed.delta === "string") {
+            accumulated += parsed.delta;
             onDelta(parsed.delta);
           }
         } catch {
@@ -35,4 +38,6 @@ export async function consumeGmTextStream(
       }
     }
   }
+
+  return accumulated;
 }
