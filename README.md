@@ -27,6 +27,8 @@ The GM uses **controlled randomness** (via internal reasoning or tools such as `
 
 If Postgres mode never activates locally but `DATABASE_URL` is in `.env`, check that your shell does not export an **empty** `DATABASE_URL` (Next’s dotenv loader will not override an existing key). Run `unset DATABASE_URL` in that terminal, or rely on the app’s fallback that re-reads project `.env*` files when the variable is missing or blank.
 
+On **Vercel**, NationForge **must** have `DATABASE_URL` set for every environment where you create or join games: serverless instances cannot write the local `.data/` JSON store. Missing DB env produces a clear JSON error from `POST /api/nationforge/sessions` (and the new-session page surfaces `error` / `message`). Preview deployments use the same env as configured in the Vercel project (add `DATABASE_URL` for Preview if needed).
+
 Optional: `XAI_MODEL`, `XAI_TTS_VOICE_ID` (see `.env.example`).
 
 ---

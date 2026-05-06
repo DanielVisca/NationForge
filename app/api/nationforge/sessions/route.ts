@@ -1,16 +1,25 @@
 import { NextResponse } from "next/server";
 
+import { nationforgeErrorResponse } from "@/lib/nationforge/nationforge-http-error";
 import {
   createGameSession,
   listNationForgeSessionSummaries,
 } from "@/lib/nationforge/store";
 
 export async function GET() {
-  const sessions = await listNationForgeSessionSummaries();
-  return NextResponse.json({ sessions });
+  try {
+    const sessions = await listNationForgeSessionSummaries();
+    return NextResponse.json({ sessions });
+  } catch (e) {
+    return nationforgeErrorResponse("NATIONFORGE_SESSIONS_GET", e);
+  }
 }
 
 export async function POST() {
-  const session = await createGameSession();
-  return NextResponse.json(session);
+  try {
+    const session = await createGameSession();
+    return NextResponse.json(session);
+  } catch (e) {
+    return nationforgeErrorResponse("NATIONFORGE_SESSIONS_POST", e);
+  }
 }

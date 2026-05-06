@@ -25,11 +25,30 @@ function parsePayload(raw: unknown): StoreFile {
   return raw as StoreFile;
 }
 
+/**
+ * `channel_binding=require` (common on Neon pooled URLs) breaks many Node/pg
+ * WebSocket paths; strip it for the Pool driver.
+ */
+function normalizePoolConnectionString(connectionString: string): string {
+  try {
+    const u = new URL(connectionString);
+    u.searchParams.delete("channel_binding");
+    return u.href;
+  } catch {
+    return connectionString;
+  }
+}
+
 function getPool(connectionString: string): Pool {
   const g = globalThis as typeof globalThis & { __nationforgeNeonPool?: Pool };
   if (!g.__nationforgeNeonPool) {
     neonConfig.webSocketConstructor = ws;
-    g.__nationforgeNeonPool = new Pool({ connectionString });
+    g.__nationforgeNeonPool = new Pool({
+      connectionString: normalizePoolConnectionString(connectionString),
+    });
+    g.__nationforgeNeonPool.on("error", (err: Error) => {
+      console.error("[nationforge] Neon pool error", err);
+    });
   }
   return g.__nationforgeNeonPool;
 }

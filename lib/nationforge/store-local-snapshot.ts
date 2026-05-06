@@ -38,6 +38,11 @@ async function readStore(): Promise<StoreFile> {
 }
 
 async function writeStore(store: StoreFile): Promise<void> {
+  if (process.env.VERCEL) {
+    throw new Error(
+      "NationForge: add DATABASE_URL in Vercel project settings — the serverless filesystem cannot persist .data/nationforge-sessions.json.",
+    );
+  }
   await ensureDataDir();
   const json = JSON.stringify(store, null, 2);
   const tmp = path.join(DATA_DIR, `nf-${randomUUID()}.tmp.json`);
