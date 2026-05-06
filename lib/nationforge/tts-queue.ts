@@ -2,6 +2,14 @@
 
 import { normalizeXaiTtsVoiceId } from "@/lib/nationforge/tts-voices";
 
+const MIN_PLAYBACK_RATE = 1;
+const MAX_PLAYBACK_RATE = 1.25;
+
+function clampPlaybackRate(raw: number): number {
+  if (!Number.isFinite(raw)) return 1;
+  return Math.min(MAX_PLAYBACK_RATE, Math.max(MIN_PLAYBACK_RATE, raw));
+}
+
 type TtsQueueApi = {
   enqueue: (text: string) => void;
   clear: () => void;
@@ -12,9 +20,11 @@ type TtsQueueApi = {
  * Sequential TTS playback: fetches MP3 from `/api/nationforge/tts`, plays with HTMLAudioElement.
  * New text while playing is queued; `clear` stops current audio and drops pending chunks.
  * `getVoiceId` is read on each request so the user can change voice without rebuilding the queue.
+ * `getPlaybackRate` is read before each clip plays (1–1.25); pitch/timbre at &gt;1 is browser-dependent.
  */
 export function createNationForgeTtsQueue(
   getVoiceId: () => string = () => "eve",
+  getPlaybackRate?: () => number,
 ): TtsQueueApi {
   const pending: string[] = [];
   let draining = false;
@@ -50,6 +60,7 @@ export function createNationForgeTtsQueue(
       audio.addEventListener("ended", onEnd);
       audio.addEventListener("error", onErr);
       audio.src = url;
+      audio.playbackRate = clampPlaybackRate(getPlaybackRate?.() ?? 1);
       void audio.play().catch(() => {
         cleanup();
         reject(new Error("Audio play() rejected"));

@@ -62,6 +62,10 @@ import NationForgeWizard from "./NationForgeWizard";
 
 const NATIONFORGE_TTS_LS = "nationforge-tts-enabled";
 const NATIONFORGE_TTS_VOICE_LS = "nationforge-tts-voice";
+const NATIONFORGE_TTS_RATE_LS = "nationforge-tts-playback-rate";
+
+const TTS_PLAYBACK_RATE_PRESETS = [1, 1.1, 1.2] as const;
+type TtsPlaybackRatePreset = (typeof TTS_PLAYBACK_RATE_PRESETS)[number];
 
 function initialTtsEnabled(): boolean {
   if (typeof window === "undefined") return false;
@@ -79,6 +83,28 @@ function initialTtsVoiceId(): XaiTtsVoiceId {
     return voiceRaw ? normalizeXaiTtsVoiceId(voiceRaw) : "eve";
   } catch {
     return "eve";
+  }
+}
+
+function initialTtsPlaybackRate(): TtsPlaybackRatePreset {
+  if (typeof window === "undefined") return 1;
+  try {
+    const raw = localStorage.getItem(NATIONFORGE_TTS_RATE_LS);
+    if (!raw) return 1;
+    const n = Number.parseFloat(raw);
+    if (!Number.isFinite(n)) return 1;
+    let best: TtsPlaybackRatePreset = 1;
+    let bestDiff = Infinity;
+    for (const p of TTS_PLAYBACK_RATE_PRESETS) {
+      const d = Math.abs(p - n);
+      if (d < bestDiff) {
+        bestDiff = d;
+        best = p;
+      }
+    }
+    return best;
+  } catch {
+    return 1;
   }
 }
 
@@ -728,7 +754,10 @@ export default function NationForgeBoard() {
   const [ttsEnabled, setTtsEnabled] = useState(initialTtsEnabled);
   const [ttsVoiceId, setTtsVoiceId] =
     useState<XaiTtsVoiceId>(initialTtsVoiceId);
+  const [ttsPlaybackRate, setTtsPlaybackRate] =
+    useState<TtsPlaybackRatePreset>(initialTtsPlaybackRate);
   const ttsVoiceIdRef = useRef<XaiTtsVoiceId>("eve");
+  const ttsPlaybackRateRef = useRef<TtsPlaybackRatePreset>(ttsPlaybackRate);
   const ttsQueueRef = useRef<ReturnType<typeof createNationForgeTtsQueue> | null>(
     null,
   );
@@ -739,6 +768,7 @@ export default function NationForgeBoard() {
     if (!ttsQueueRef.current) {
       ttsQueueRef.current = createNationForgeTtsQueue(
         () => ttsVoiceIdRef.current,
+        () => ttsPlaybackRateRef.current,
       );
     }
     return ttsQueueRef.current;
@@ -747,6 +777,10 @@ export default function NationForgeBoard() {
   useEffect(() => {
     ttsVoiceIdRef.current = ttsVoiceId;
   }, [ttsVoiceId]);
+
+  useEffect(() => {
+    ttsPlaybackRateRef.current = ttsPlaybackRate;
+  }, [ttsPlaybackRate]);
 
   const [domesticDraft, setDomesticDraft] = useState("");
   const [domesticSaveState, setDomesticSaveState] = useState<
@@ -1168,6 +1202,14 @@ export default function NationForgeBoard() {
       /* ignore */
     }
   }, [ttsVoiceId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NATIONFORGE_TTS_RATE_LS, String(ttsPlaybackRate));
+    } catch {
+      /* ignore */
+    }
+  }, [ttsPlaybackRate]);
 
   useEffect(() => {
     return () => {
@@ -1933,6 +1975,33 @@ export default function NationForgeBoard() {
                     {XAI_TTS_VOICES.map((v) => (
                       <option key={v.id} value={v.id}>
                         {v.label}
+                      </option>
+                    ))}
+                  </select>
+                  <label htmlFor="nationforge-tts-rate" className="sr-only">
+                    Dictation playback speed
+                  </label>
+                  <span className="hidden sm:inline text-zinc-500 dark:text-zinc-400">
+                    Speed
+                  </span>
+                  <select
+                    id="nationforge-tts-rate"
+                    value={String(ttsPlaybackRate)}
+                    onChange={(e) => {
+                      const n = Number.parseFloat(e.target.value);
+                      const next = (
+                        TTS_PLAYBACK_RATE_PRESETS as readonly number[]
+                      ).includes(n)
+                        ? (n as TtsPlaybackRatePreset)
+                        : 1;
+                      setTtsPlaybackRate(next);
+                    }}
+                    className="w-[4.5rem] rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                    aria-label="Dictation playback speed"
+                  >
+                    {TTS_PLAYBACK_RATE_PRESETS.map((r) => (
+                      <option key={r} value={String(r)}>
+                        {r === 1 ? "1×" : `${r}×`}
                       </option>
                     ))}
                   </select>
