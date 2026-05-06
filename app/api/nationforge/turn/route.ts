@@ -20,6 +20,10 @@ import {
   validatePlayerTurn,
 } from "@/lib/nationforge/player-input";
 import { rateLimitNationForgeTurn } from "@/lib/nationforge/rate-limit";
+import {
+  repairAllGmThreadsInSession,
+  repairNationGmThreadMessages,
+} from "@/lib/nationforge/repair-gm-thread-for-model";
 import { sliceFromLastUser } from "@/lib/nationforge/slice-messages";
 import { getNationGmMessages } from "@/lib/nationforge/gm-threads";
 import type { GameSession } from "@/lib/nationforge/schema";
@@ -235,7 +239,9 @@ export async function POST(req: Request) {
   }
 
   const stripResult = await mutateSessionExclusive(body.sessionId, (s) => {
-    const cleaned = recoverStaleGmRunningPhase(stripOrphanOpeningUserMessage(s));
+    const cleaned = repairAllGmThreadsInSession(
+      recoverStaleGmRunningPhase(stripOrphanOpeningUserMessage(s)),
+    );
     return { ok: true, session: cleaned };
   });
   if (!stripResult.ok) {
@@ -293,7 +299,10 @@ export async function POST(req: Request) {
           "A valid seat token is required to send moves for this nation.",
       };
     }
-    const allMessages: UIMessage[] = [...getNationGmMessages(s, pov), userMessage];
+    const history = repairNationGmThreadMessages([
+      ...getNationGmMessages(s, pov),
+    ]);
+    const allMessages: UIMessage[] = [...history, userMessage];
     const streamIds = [...(s.gmStreamingNationIds ?? [])];
     if (!streamIds.includes(pov)) {
       streamIds.push(pov);
