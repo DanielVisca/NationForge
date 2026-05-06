@@ -49,40 +49,253 @@ html[data-font="playful"] body {
 
 html[data-theme="unicorn"] body {
   color-scheme: light;
-  background: linear-gradient(
-    125deg,
-    #fce7f3 0%,
-    #e9d5ff 22%,
-    #dbeafe 44%,
-    #cffafe 66%,
-    #fef9c3 88%,
-    #fce7f3 100%
-  );
+  /* Layered neons + rainbow strip; text tuned for contrast on hot backgrounds */
+  background:
+    radial-gradient(
+      ellipse 130% 85% at 8% 12%,
+      rgb(255 45 180 / 0.42),
+      transparent 52%
+    ),
+    radial-gradient(
+      ellipse 110% 90% at 92% 8%,
+      rgb(168 85 247 / 0.45),
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse 100% 70% at 50% 100%,
+      rgb(6 182 212 / 0.38),
+      transparent 55%
+    ),
+    radial-gradient(
+      circle at 70% 45%,
+      rgb(250 204 21 / 0.35),
+      transparent 38%
+    ),
+    linear-gradient(
+      118deg,
+      #ff1493 0%,
+      #d946ef 12%,
+      #8b5cf6 26%,
+      #6366f1 38%,
+      #0ea5e9 50%,
+      #06b6d4 60%,
+      #22d3ee 68%,
+      #4ade80 78%,
+      #facc15 88%,
+      #fb923c 94%,
+      #ff1493 100%
+    );
   background-attachment: fixed;
-  color: var(--foreground);
+  color: #312e81;
 }
 
 @media (prefers-reduced-motion: no-preference) {
   html[data-theme="unicorn"] body {
-    background-size: 200% 200%;
-    animation: unicorn-bg-shift 20s ease-in-out infinite;
+    background-size:
+      100% 100%,
+      100% 100%,
+      100% 100%,
+      120% 120%,
+      320% 320%;
+    animation: unicorn-bg-shift 14s ease-in-out infinite;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   html[data-theme="unicorn"] body {
-    background-size: cover;
+    background-size: cover, cover, cover, cover, cover;
   }
 }
 
 @keyframes unicorn-bg-shift {
   0%,
   100% {
-    background-position: 0% 40%;
+    background-position:
+      0% 0%,
+      100% 0%,
+      50% 100%,
+      60% 40%,
+      0% 45%;
   }
-  50% {
-    background-position: 100% 60%;
+  33% {
+    background-position:
+      15% 8%,
+      88% 12%,
+      48% 92%,
+      75% 35%,
+      70% 30%;
   }
+  66% {
+    background-position:
+      8% 18%,
+      95% 6%,
+      55% 88%,
+      40% 55%,
+      100% 55%;
+  }
+}
+
+/* Unicorn: hot-pink chat chrome (.aetheria-chat on Grok + NationForge play chat) */
+html[data-theme="unicorn"] .aetheria-chat [data-chat-role="user"] {
+  border-color: rgb(251 113 133 / 0.95) !important;
+  background: linear-gradient(145deg, #f9a8d4, #f472b6, #ec4899, #db2777) !important;
+  color: #fff !important;
+  box-shadow:
+    0 4px 20px rgb(219 39 119 / 0.38),
+    0 0 0 1px rgb(255 255 255 / 0.2) inset;
+}
+
+html[data-theme="unicorn"] .aetheria-chat [data-chat-role="user"] > p {
+  color: rgb(255 228 240 / 0.95) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat [data-chat-role="assistant"] {
+  border-color: rgb(244 63 119 / 0.7) !important;
+  background: linear-gradient(180deg, #fff8fc, #ffe4f0) !important;
+  color: rgb(131 24 67) !important;
+  box-shadow: 0 2px 16px rgb(251 113 133 / 0.22);
+}
+
+html[data-theme="unicorn"] .aetheria-chat [data-chat-role="gm"] {
+  border-color: rgb(219 39 119 / 0.65) !important;
+  background: linear-gradient(165deg, #fff5fb, #ffd6ec, #ffc9e6) !important;
+  box-shadow: 0 2px 18px rgb(236 72 153 / 0.28);
+}
+
+html[data-theme="unicorn"] .aetheria-chat [data-chat-role="gm"] > p:first-of-type {
+  color: #be185d !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat [data-chat-role="gm"] .mt-1 {
+  color: rgb(76 5 43) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat [data-chat-role="gm-stream"] {
+  border-color: rgb(244 63 119 / 0.55) !important;
+  background: linear-gradient(135deg, #fff5f9, #ffe0ef, #ffd0e8) !important;
+  box-shadow: 0 2px 14px rgb(251 113 133 / 0.2);
+}
+
+html[data-theme="unicorn"] .aetheria-chat [data-chat-role="gm-stream"] > p:first-of-type {
+  color: #be185d !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat [data-chat-role="gm-stream"] .mt-1 {
+  color: rgb(88 10 52 / 0.92) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat [data-chat-role="gm-stream"] p.text-xs {
+  color: rgb(88 10 52 / 0.9) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat [data-chat-role="gm-stream"] .animate-pulse {
+  background-color: #db2777 !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat aside {
+  border-color: rgb(244 114 182 / 0.45) !important;
+  background: linear-gradient(180deg, #fff5f9, #ffe8f2) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat aside > .border-b button {
+  background: linear-gradient(135deg, #f472b6, #db2777) !important;
+  color: #fff !important;
+  box-shadow: 0 2px 10px rgb(219 39 119 / 0.35);
+}
+
+html[data-theme="unicorn"] .aetheria-chat aside nav button.bg-white {
+  background: #fff0f7 !important;
+  color: #9f1239 !important;
+  border: 1px solid rgb(244 114 182 / 0.45);
+  box-shadow: 0 1px 4px rgb(251 113 133 / 0.2);
+}
+
+html[data-theme="unicorn"] .aetheria-chat aside nav button:not(.bg-white):hover {
+  background: rgb(255 255 255 / 0.65) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat section .overflow-y-auto.px-4 {
+  background: linear-gradient(180deg, rgb(255 253 252 / 0.55), rgb(255 232 244 / 0.45));
+}
+
+html[data-theme="unicorn"] .aetheria-chat form.border-t {
+  border-color: rgb(251 113 133 / 0.45) !important;
+  background: linear-gradient(180deg, #fff8fc, #ffe8f2) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat form textarea {
+  border-color: rgb(244 114 182 / 0.65) !important;
+  background: #fff !important;
+  color: rgb(88 10 52) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat form button.bg-zinc-900,
+html[data-theme="unicorn"] .aetheria-chat form button.dark\:bg-zinc-100 {
+  background: linear-gradient(135deg, #ec4899, #db2777) !important;
+  color: #fff !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat form button.rounded-xl.border {
+  border-color: rgb(244 63 119 / 0.55) !important;
+  color: rgb(131 24 67) !important;
+  background: #fff5f9 !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat .text-center.text-sm.text-zinc-500 {
+  color: rgb(157 23 77 / 0.8) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat.flex.rounded-2xl {
+  border-color: rgb(244 63 119 / 0.55) !important;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.97), rgb(255 240 248 / 0.95)) !important;
+  box-shadow:
+    0 8px 28px rgb(236 72 153 / 0.18),
+    0 0 0 1px rgb(255 255 255 / 0.5) inset;
+}
+
+html[data-theme="unicorn"] .aetheria-chat .nationforge-chat-ribbon,
+html[data-theme="unicorn"] .aetheria-chat .nationforge-chat-tts,
+html[data-theme="unicorn"] .aetheria-chat .nationforge-chat-impact {
+  border-color: rgb(244 114 182 / 0.5) !important;
+  background: rgb(255 247 252 / 0.94) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat [role="log"] {
+  border-color: rgb(236 72 153 / 0.42) !important;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.92), rgb(255 236 246 / 0.9)) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat .sticky.bottom-0 {
+  border-color: rgb(251 113 133 / 0.45) !important;
+  background: rgb(255 250 252 / 0.97) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat .sticky.bottom-0 textarea {
+  border-color: rgb(244 114 182 / 0.55) !important;
+}
+
+html[data-theme="unicorn"] .aetheria-chat .sticky.bottom-0 button.bg-zinc-900,
+html[data-theme="unicorn"] .aetheria-chat .sticky.bottom-0 button.dark\:bg-zinc-100 {
+  background: linear-gradient(135deg, #f472b6, #db2777) !important;
+  color: #fff !important;
+}
+
+@keyframes nationforge-stat-delta-float {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 4px) scale(0.92);
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -22px) scale(1.05);
+  }
+}
+
+.nationforge-stat-delta-float {
+  animation: nationforge-stat-delta-float 1.85s ease-out forwards;
 }
 
 body {

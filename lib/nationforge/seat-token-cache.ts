@@ -6,6 +6,8 @@
 export const NATIONFORGE_HOST_TOKENS_KEY = "nationforge-host-tokens";
 
 const LAST_SEAT_KEY = "nationforge-last-seat";
+const PLAYER_PROFILE_KEY = "nationforge-player-profile";
+const ENROLLED_SESSIONS_KEY = "nationforge-enrolled-sessions";
 
 type HostTokenStore = Record<string, Record<string, string>>;
 
@@ -16,6 +18,79 @@ type LastSeatEntry = {
 };
 
 type LastSeatStore = Record<string, LastSeatEntry>;
+
+export type NationForgePlayerProfile = {
+  playerId: string;
+  displayName?: string;
+  createdAt: string;
+};
+
+export type NationForgeEnrollment = {
+  sessionId: string;
+  nationId: string;
+  token: string;
+  roomCode?: string;
+  nationName?: string;
+  label?: string;
+  favorite?: boolean;
+  createdAt: string;
+  lastOpenedAt: string;
+};
+
+type EnrollmentStore = Record<string, NationForgeEnrollment>;
+
+type RememberSeatMeta = {
+  roomCode?: string;
+  nationName?: string;
+  label?: string;
+};
+
+function safeRandomId(): string {
+  try {
+    return globalThis.crypto?.randomUUID?.() ?? `nf-${Date.now()}`;
+  } catch {
+    return `nf-${Date.now()}`;
+  }
+}
+
+export function ensureNationForgePlayerProfile(): NationForgePlayerProfile | null {
+  if (typeof globalThis.window === "undefined") return null;
+  try {
+    const raw = globalThis.localStorage.getItem(PLAYER_PROFILE_KEY);
+    if (raw) {
+      const profile = JSON.parse(raw) as NationForgePlayerProfile;
+      if (profile.playerId?.trim()) return profile;
+    }
+    const profile: NationForgePlayerProfile = {
+      playerId: safeRandomId(),
+      createdAt: new Date().toISOString(),
+    };
+    globalThis.localStorage.setItem(PLAYER_PROFILE_KEY, JSON.stringify(profile));
+    return profile;
+  } catch {
+    return null;
+  }
+}
+
+export function readNationForgeEnrollments(): EnrollmentStore {
+  if (typeof globalThis.window === "undefined") return {};
+  try {
+    const raw = globalThis.localStorage.getItem(ENROLLED_SESSIONS_KEY);
+    return (raw ? JSON.parse(raw) : {}) as EnrollmentStore;
+  } catch {
+    return {};
+  }
+}
+
+export function readNationForgeEnrollment(
+  sessionId: string,
+): NationForgeEnrollment | null {
+  return readNationForgeEnrollments()[sessionId] ?? null;
+}
+
+function writeNationForgeEnrollments(store: EnrollmentStore): void {
+  globalThis.localStorage.setItem(ENROLLED_SESSIONS_KEY, JSON.stringify(store));
+}
 
 /** Host copy map for a session (nationId → token), for Share & join UI. */
 export function readHostTokensForSession(
@@ -56,9 +131,11 @@ export function rememberNationForgeSeat(
   sessionId: string,
   nationId: string,
   token: string,
+  meta: RememberSeatMeta = {},
 ): void {
   if (typeof globalThis.window === "undefined") return;
   try {
+    ensureNationForgePlayerProfile();
     const raw = globalThis.localStorage.getItem(NATIONFORGE_HOST_TOKENS_KEY);
     const all = (raw ? JSON.parse(raw) : {}) as HostTokenStore;
     all[sessionId] = { ...(all[sessionId] ?? {}), [nationId]: token };
@@ -75,8 +152,86 @@ export function rememberNationForgeSeat(
       savedAt: new Date().toISOString(),
     };
     globalThis.localStorage.setItem(LAST_SEAT_KEY, JSON.stringify(lastMap));
+
+    const enrollments = readNationForgeEnrollments();
+    const prev = enrollments[sessionId];
+    const now = new Date().toISOString();
+    enrollments[sessionId] = {
+      sessionId,
+      nationId,
+      token,
+      roomCode: meta.roomCode ?? prev?.roomCode,
+      nationName: meta.nationName ?? prev?.nationName,
+      label: meta.label ?? prev?.label,
+      favorite: prev?.favorite,
+      createdAt: prev?.createdAt ?? now,
+      lastOpenedAt: now,
+    };
+    writeNationForgeEnrollments(enrollments);
   } catch {
     /* ignore quota / private mode */
+  }
+}
+
+export function touchNationForgeEnrollment(
+  sessionId: string,
+  meta: RememberSeatMeta = {},
+): void {
+  if (typeof globalThis.window === "undefined") return;
+  try {
+    const enrollments = readNationForgeEnrollments();
+    const prev = enrollments[sessionId];
+    if (!prev) return;
+    enrollments[sessionId] = {
+      ...prev,
+      roomCode: meta.roomCode ?? prev.roomCode,
+      nationName: meta.nationName ?? prev.nationName,
+      label: meta.label ?? prev.label,
+      lastOpenedAt: new Date().toISOString(),
+    };
+    writeNationForgeEnrollments(enrollments);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function setNationForgeEnrollmentFavorite(
+  sessionId: string,
+  favorite: boolean,
+): void {
+  if (typeof globalThis.window === "undefined") return;
+  try {
+    const enrollments = readNationForgeEnrollments();
+    const prev = enrollments[sessionId];
+    if (!prev) return;
+    enrollments[sessionId] = { ...prev, favorite };
+    writeNationForgeEnrollments(enrollments);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function forgetNationForgeSession(sessionId: string): void {
+  if (typeof globalThis.window === "undefined") return;
+  try {
+    const enrollments = readNationForgeEnrollments();
+    delete enrollments[sessionId];
+    writeNationForgeEnrollments(enrollments);
+
+    const lastRaw = globalThis.localStorage.getItem(LAST_SEAT_KEY);
+    const lastMap = (lastRaw ? JSON.parse(lastRaw) : {}) as LastSeatStore;
+    delete lastMap[sessionId];
+    globalThis.localStorage.setItem(LAST_SEAT_KEY, JSON.stringify(lastMap));
+
+    const hostRaw = globalThis.localStorage.getItem(NATIONFORGE_HOST_TOKENS_KEY);
+    const hostAll = (hostRaw ? JSON.parse(hostRaw) : {}) as HostTokenStore;
+    delete hostAll[sessionId];
+    globalThis.localStorage.setItem(
+      NATIONFORGE_HOST_TOKENS_KEY,
+      JSON.stringify(hostAll),
+    );
+  } catch {
+    /* ignore */
   }
 }
 
@@ -89,6 +244,10 @@ export function clearNationForgeSeat(sessionId: string): void {
     const nationId = lastMap[sessionId]?.nationId;
     delete lastMap[sessionId];
     globalThis.localStorage.setItem(LAST_SEAT_KEY, JSON.stringify(lastMap));
+
+    const enrollments = readNationForgeEnrollments();
+    delete enrollments[sessionId];
+    writeNationForgeEnrollments(enrollments);
 
     const hostRaw = globalThis.localStorage.getItem(NATIONFORGE_HOST_TOKENS_KEY);
     const hostAll = (hostRaw ? JSON.parse(hostRaw) : {}) as HostTokenStore;

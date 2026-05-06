@@ -29,6 +29,7 @@ function MessageBubble({ message }: { message: UIMessage }) {
       className={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}
     >
       <div
+        data-chat-role={isUser ? "user" : "assistant"}
         className={`max-w-[min(100%,42rem)] rounded-2xl px-4 py-2 text-sm leading-relaxed ${
           isUser
             ? "bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900"
@@ -260,7 +261,7 @@ export function GrokChat() {
   }, [loadConversation]);
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="aetheria-chat flex min-h-0 flex-1">
       <aside className="flex w-64 shrink-0 flex-col border-r border-zinc-200 bg-zinc-100/80 dark:border-zinc-800 dark:bg-zinc-900/50">
         <div className="border-b border-zinc-200 p-3 dark:border-zinc-800">
           <button

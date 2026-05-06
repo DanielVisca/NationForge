@@ -16,7 +16,14 @@ import { resolveForgeToNation } from "./nation-forge-resolve";
 import { generateForgeReviewNarrativeOrHeuristic } from "./generate-forge-review-narrative";
 import { suggestNationNameOrHeuristic } from "./suggest-nation-name";
 import { migrateSession, normalizeNation } from "./session-migrate";
-import type { Crisis, GameSession, Nation, NationForgeProgress } from "./schema";
+import type {
+  Crisis,
+  GameSession,
+  Nation,
+  NationForgeProgress,
+  TableEvent,
+} from "./schema";
+import { MAX_TABLE_EVENTS_STORED } from "./schema";
 
 export type ForgeClientAction =
   | { type: "pick"; choiceId: string }
@@ -148,6 +155,12 @@ export function applyForgeActionToSession(
       return { ok: false, error: resolved.error };
     }
     const nations = [...s.nations];
+    const rawBrief = progress.reviewNarrativeMarkdown?.trim();
+    const forgeBriefingMarkdown =
+      rawBrief && rawBrief.length > 12_000
+        ? `${rawBrief.slice(0, 12_000)}…`
+        : rawBrief;
+
     nations[nationIndex] = normalizeNation({
       ...nation,
       stats: resolved.stats,
@@ -155,8 +168,22 @@ export function applyForgeActionToSession(
       buildNotes: resolved.buildNotes,
       forgeComplete: true,
       forgeProgress: null,
+      ...(forgeBriefingMarkdown
+        ? { forgeBriefingMarkdown }
+        : {}),
     });
-    let next: GameSession = { ...s, nations };
+    const forged = nations[nationIndex]!;
+    const seatEvent: TableEvent = {
+      id: randomUUID(),
+      at: new Date().toISOString(),
+      kind: "seat_forged",
+      nationId: forged.id,
+      name: forged.name,
+    };
+    const tableEvents = [...(s.tableEvents ?? []), seatEvent].slice(
+      -MAX_TABLE_EVENTS_STORED,
+    );
+    let next: GameSession = { ...s, nations, tableEvents };
     next = maybeStartFirstBeat(next);
     return { ok: true, session: next };
   }

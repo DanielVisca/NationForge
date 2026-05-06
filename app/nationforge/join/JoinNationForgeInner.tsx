@@ -32,9 +32,13 @@ export default function JoinNationForgeInner() {
       const data = (await res.json()) as {
         sessionId: string;
         nationId: string;
+        name?: string;
         token: string;
       };
-      rememberNationForgeSeat(data.sessionId, data.nationId, data.token);
+      rememberNationForgeSeat(data.sessionId, data.nationId, data.token, {
+        roomCode: code.trim().toUpperCase(),
+        nationName: data.name,
+      });
       router.push(
         `/nationforge/${data.sessionId}?token=${encodeURIComponent(data.token)}`,
       );
