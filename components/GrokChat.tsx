@@ -178,7 +178,7 @@ function ChatSession({
         ) : (
           messages.map((m, i) => (
             <MessageBubble
-              key={`${i}-${m.id?.trim() ? m.id : "noid"}-${m.role}`}
+              key={m.id?.trim() ? m.id : `noid-${i}`}
               message={m}
             />
           ))
