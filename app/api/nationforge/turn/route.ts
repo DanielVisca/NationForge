@@ -8,6 +8,7 @@ import {
 } from "ai";
 import { NextResponse } from "next/server";
 
+import { agentDebugLog } from "@/lib/debug-agent-log";
 import { createNationForgeTools } from "@/lib/nationforge/game-tools";
 import { buildGmSystemPrompt } from "@/lib/nationforge/gm-prompt";
 import { preparePlayerTurnForPersistence } from "@/lib/nationforge/confidential-turn";
@@ -24,8 +25,9 @@ import {
   repairAllGmThreadsInSession,
   repairNationGmThreadMessages,
 } from "@/lib/nationforge/repair-gm-thread-for-model";
-import { sliceFromLastUser } from "@/lib/nationforge/slice-messages";
+import { filterModelMessagesWithXaiInputContent } from "@/lib/nationforge/model-message-content";
 import { getNationGmMessages } from "@/lib/nationforge/gm-threads";
+import { sliceFromLastUser } from "@/lib/nationforge/slice-messages";
 import type { GameSession } from "@/lib/nationforge/schema";
 import {
   getGameSession,
@@ -356,8 +358,48 @@ export async function POST(req: Request) {
       timeout: 360_000,
       prepareStep: async ({ stepNumber, steps }) => {
         if (stepNumber === 0 && usePreviousResponse) {
+          const sliced = sliceFromLastUser(fullModelMessages);
+          const cleaned = filterModelMessagesWithXaiInputContent(sliced);
+          const chainOk =
+            cleaned.length > 0 && cleaned[cleaned.length - 1]?.role === "user";
+          if (!chainOk) {
+            console.warn(
+              "[nationforge/turn] Skipping previous_response_id: sliced input has no valid trailing user row for xAI (empty content rows). Using full messages.",
+              { sessionId: body.sessionId, pov, slicedLen: sliced.length, cleanedLen: cleaned.length },
+            );
+            void agentDebugLog({
+              hypothesisId: "NF-xAI",
+              location: "app/api/nationforge/turn/route.ts:prepareStep",
+              message: "previous_response_chain_skipped_empty_slice",
+              data: {
+                sessionId: body.sessionId,
+                povNationId: pov,
+                slicedLen: sliced.length,
+                cleanedLen: cleaned.length,
+                lastRole: cleaned.at(-1)?.role ?? null,
+              },
+            });
+            return { messages: fullModelMessages };
+          }
+          if (cleaned.length !== sliced.length) {
+            console.warn(
+              "[nationforge/turn] Dropped empty model rows from previous_response slice before xAI.",
+              { sessionId: body.sessionId, pov, slicedLen: sliced.length, cleanedLen: cleaned.length },
+            );
+            void agentDebugLog({
+              hypothesisId: "NF-xAI",
+              location: "app/api/nationforge/turn/route.ts:prepareStep",
+              message: "previous_response_slice_filtered_empty_rows",
+              data: {
+                sessionId: body.sessionId,
+                povNationId: pov,
+                slicedLen: sliced.length,
+                cleanedLen: cleaned.length,
+              },
+            });
+          }
           return {
-            messages: sliceFromLastUser(fullModelMessages),
+            messages: cleaned,
             providerOptions: {
               xai: { previousResponseId: lastResponseId },
             },

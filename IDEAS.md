@@ -4,3 +4,5 @@
 - add posthog for tracking
 - add voice read aloud chapters!
 - ~~cache your seat token locally in browser so you can relogin as you automatically (per session id)~~ (done: `seat-token-cache.ts` + board auto-restore)
+- ~~sessions (lobby) have "my" ones you hold a seat in, recent, favorites, search, and non-adversarial copy~~ (done: My Games MVP dashboard; world names still future)
+lee

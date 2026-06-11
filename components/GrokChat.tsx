@@ -10,6 +10,19 @@ type ConversationSummary = {
   updatedAt: string;
 };
 
+function debugAgentClientLog(entry: {
+  hypothesisId: string;
+  location: string;
+  message: string;
+  data?: unknown;
+}) {
+  void fetch("/api/debug-agent-log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(entry),
+  }).catch(() => {});
+}
+
 function isToolPart(
   part: UIMessage["parts"][number],
 ): part is UIMessage["parts"][number] & { type: string; toolCallId: string } {
@@ -116,7 +129,28 @@ function ChatSession({
     messages: initialMessages,
     transport,
     onFinish: () => {
+      // #region agent log
+      debugAgentClientLog({
+        hypothesisId: "H-client",
+        location: "GrokChat.tsx:ChatSession:onFinish",
+        message: "useChat_stream_finished",
+        data: { conversationId },
+      });
+      // #endregion
       void onListRefresh();
+    },
+    onError: (err) => {
+      // #region agent log
+      debugAgentClientLog({
+        hypothesisId: "H-client",
+        location: "GrokChat.tsx:ChatSession:onError",
+        message: "useChat_error",
+        data: {
+          conversationId,
+          err: err instanceof Error ? err.message : String(err),
+        },
+      });
+      // #endregion
     },
   });
 
@@ -216,7 +250,17 @@ export function GrokChat() {
 
   const refreshList = useCallback(async () => {
     const res = await fetch("/api/conversations");
-    if (!res.ok) return;
+    if (!res.ok) {
+      // #region agent log
+      debugAgentClientLog({
+        hypothesisId: "H1",
+        location: "GrokChat.tsx:refreshList",
+        message: "conversations_list_not_ok",
+        data: { status: res.status },
+      });
+      // #endregion
+      return;
+    }
     const data = (await res.json()) as { conversations: ConversationSummary[] };
     setList(data.conversations);
   }, []);

@@ -1,3 +1,4 @@
+import { getErrorMessage } from "@ai-sdk/provider-utils";
 import {
   convertToModelMessages,
   streamText,
@@ -7,22 +8,14 @@ import {
 } from "ai";
 import { NextResponse } from "next/server";
 
+import { agentDebugLog } from "@/lib/debug-agent-log";
 import { chatTools } from "@/lib/chat-tools";
 import { getConversation, saveConversationPatch } from "@/lib/conversation-store";
+import { filterModelMessagesWithXaiInputContent } from "@/lib/nationforge/model-message-content";
+import { sliceFromLastUser } from "@/lib/nationforge/slice-messages";
 import { defaultModelId, requireXaiApiKey, xai } from "@/lib/xai";
 
 export const maxDuration = 300;
-
-function sliceFromLastUser(messages: ModelMessage[]): ModelMessage[] {
-  let i = messages.length - 1;
-  while (i >= 0 && messages[i].role !== "user") {
-    i -= 1;
-  }
-  if (i < 0) {
-    return messages;
-  }
-  return messages.slice(i);
-}
 
 type ChatRequestBody = {
   id?: string;
@@ -62,9 +55,94 @@ export async function POST(req: Request) {
   const usePreviousResponse =
     Boolean(lastResponseId) && trigger === "submit-message";
 
-  const fullModelMessages = await convertToModelMessages(uiMessages, {
-    tools: chatTools,
+  // #region agent log
+  void agentDebugLog({
+    hypothesisId: "H3-H5",
+    location: "app/api/chat/route.ts:POST",
+    message: "chat_post_start",
+    data: {
+      conversationId,
+      uiMessageCount: uiMessages.length,
+      trigger,
+      usePreviousResponse,
+    },
   });
+  void fetch(
+    "http://127.0.0.1:7711/ingest/ae23ea3c-0d7c-4b48-8c6c-33596b38e250",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "1416db",
+      },
+      body: JSON.stringify({
+        sessionId: "1416db",
+        hypothesisId: "H3-H5",
+        location: "app/api/chat/route.ts:POST",
+        message: "chat_post_start",
+        data: {
+          conversationId,
+          uiMessageCount: uiMessages.length,
+          trigger,
+          usePreviousResponse,
+        },
+        timestamp: Date.now(),
+      }),
+    },
+  ).catch(() => {});
+  // #endregion
+
+  let fullModelMessages: ModelMessage[];
+  try {
+    fullModelMessages = await convertToModelMessages(uiMessages, {
+      tools: chatTools,
+    });
+  } catch (convErr) {
+    void agentDebugLog({
+      hypothesisId: "H3",
+      location: "app/api/chat/route.ts:POST",
+      message: "convertToModelMessages_failed",
+      data: {
+        err: convErr instanceof Error ? convErr.message : String(convErr),
+        uiMessageCount: uiMessages.length,
+      },
+    });
+    // #region agent log
+    void fetch(
+      "http://127.0.0.1:7711/ingest/ae23ea3c-0d7c-4b48-8c6c-33596b38e250",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "1416db",
+        },
+        body: JSON.stringify({
+          sessionId: "1416db",
+          hypothesisId: "H3",
+          location: "app/api/chat/route.ts:POST",
+          message: "convertToModelMessages_failed",
+          data: {
+            err:
+              convErr instanceof Error ? convErr.message : String(convErr),
+            uiMessageCount: uiMessages.length,
+          },
+          timestamp: Date.now(),
+        }),
+      },
+    ).catch(() => {});
+    // #endregion
+    return NextResponse.json(
+      {
+        error:
+          convErr instanceof Error
+            ? convErr.message
+            : "Failed to prepare messages for the model.",
+      },
+      { status: 400 },
+    );
+  }
+
+  let streamErrorSeen = false;
 
   const result = streamText({
     model: xai.responses(defaultModelId),
@@ -76,8 +154,38 @@ export async function POST(req: Request) {
     timeout: 360_000,
     prepareStep: ({ stepNumber, steps }) => {
       if (stepNumber === 0 && usePreviousResponse) {
+        const sliced = sliceFromLastUser(fullModelMessages);
+        const cleaned = filterModelMessagesWithXaiInputContent(sliced);
+        const chainOk =
+          cleaned.length > 0 && cleaned[cleaned.length - 1]?.role === "user";
+        if (!chainOk) {
+          void agentDebugLog({
+            hypothesisId: "NF-xAI",
+            location: "app/api/chat/route.ts:prepareStep",
+            message: "previous_response_chain_skipped_empty_slice",
+            data: {
+              conversationId,
+              slicedLen: sliced.length,
+              cleanedLen: cleaned.length,
+              lastRole: cleaned.at(-1)?.role ?? null,
+            },
+          });
+          return { messages: fullModelMessages };
+        }
+        if (cleaned.length !== sliced.length) {
+          void agentDebugLog({
+            hypothesisId: "NF-xAI",
+            location: "app/api/chat/route.ts:prepareStep",
+            message: "previous_response_slice_filtered_empty_rows",
+            data: {
+              conversationId,
+              slicedLen: sliced.length,
+              cleanedLen: cleaned.length,
+            },
+          });
+        }
         return {
-          messages: sliceFromLastUser(fullModelMessages),
+          messages: cleaned,
           providerOptions: {
             xai: { previousResponseId: lastResponseId },
           },
@@ -100,15 +208,162 @@ export async function POST(req: Request) {
 
   return result.toUIMessageStreamResponse({
     originalMessages: uiMessages,
-    onFinish: async ({ messages }) => {
+    onError: (err) => {
+      streamErrorSeen = true;
+      const text = getErrorMessage(err);
+      void agentDebugLog({
+        hypothesisId: "H5",
+        location: "app/api/chat/route.ts:toUIMessageStreamResponse",
+        message: "ui_message_stream_error",
+        data: { conversationId, text },
+      });
+      void fetch(
+        "http://127.0.0.1:7711/ingest/ae23ea3c-0d7c-4b48-8c6c-33596b38e250",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "1416db",
+          },
+          body: JSON.stringify({
+            sessionId: "1416db",
+            hypothesisId: "H5",
+            location: "app/api/chat/route.ts:toUIMessageStreamResponse",
+            message: "ui_message_stream_error",
+            data: { conversationId, text },
+            timestamp: Date.now(),
+          }),
+        },
+      ).catch(() => {});
+      return text;
+    },
+    onFinish: async ({ messages, finishReason }) => {
       const steps = await result.steps;
       const lastStep = steps.at(-1);
       const newResponseId = lastStep?.response?.id;
 
-      await saveConversationPatch(conversationId, {
-        messages,
-        lastResponseId: newResponseId,
-      });
+      const streamFailed =
+        finishReason === "error" || streamErrorSeen;
+      const messagesToSave = streamFailed ? uiMessages : messages;
+      const lastResponseIdToSave = streamFailed ? undefined : newResponseId;
+
+      if (streamFailed) {
+        void agentDebugLog({
+          hypothesisId: "H5",
+          location: "app/api/chat/route.ts:onFinish",
+          message: "persist_ui_messages_after_stream_error",
+          data: {
+            conversationId,
+            finishReason: finishReason ?? null,
+            streamErrorSeen,
+            savedCount: messagesToSave.length,
+          },
+        });
+        void fetch(
+          "http://127.0.0.1:7711/ingest/ae23ea3c-0d7c-4b48-8c6c-33596b38e250",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Debug-Session-Id": "1416db",
+            },
+            body: JSON.stringify({
+              sessionId: "1416db",
+              hypothesisId: "H5",
+              location: "app/api/chat/route.ts:onFinish",
+              message: "persist_ui_messages_after_stream_error",
+              data: {
+                conversationId,
+                finishReason: finishReason ?? null,
+                streamErrorSeen,
+                savedCount: messagesToSave.length,
+              },
+              timestamp: Date.now(),
+            }),
+          },
+        ).catch(() => {});
+      }
+
+      try {
+        await saveConversationPatch(conversationId, {
+          messages: messagesToSave,
+          lastResponseId: lastResponseIdToSave,
+        });
+        void agentDebugLog({
+          hypothesisId: "H4",
+          location: "app/api/chat/route.ts:onFinish",
+          message: "save_conversation_ok",
+          data: {
+            conversationId,
+            savedCount: messagesToSave.length,
+            hasNewResponseId: Boolean(lastResponseIdToSave),
+            streamFailed,
+          },
+        });
+        // #region agent log
+        void fetch(
+          "http://127.0.0.1:7711/ingest/ae23ea3c-0d7c-4b48-8c6c-33596b38e250",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Debug-Session-Id": "1416db",
+            },
+            body: JSON.stringify({
+              sessionId: "1416db",
+              hypothesisId: "H4",
+              location: "app/api/chat/route.ts:onFinish",
+              message: "save_conversation_ok",
+              data: {
+                conversationId,
+                savedCount: messagesToSave.length,
+                hasNewResponseId: Boolean(lastResponseIdToSave),
+                streamFailed,
+              },
+              timestamp: Date.now(),
+            }),
+          },
+        ).catch(() => {});
+        // #endregion
+      } catch (saveErr) {
+        void agentDebugLog({
+          hypothesisId: "H4",
+          location: "app/api/chat/route.ts:onFinish",
+          message: "save_conversation_failed",
+          data: {
+            conversationId,
+            err:
+              saveErr instanceof Error ? saveErr.message : String(saveErr),
+          },
+        });
+        // #region agent log
+        void fetch(
+          "http://127.0.0.1:7711/ingest/ae23ea3c-0d7c-4b48-8c6c-33596b38e250",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Debug-Session-Id": "1416db",
+            },
+            body: JSON.stringify({
+              sessionId: "1416db",
+              hypothesisId: "H4",
+              location: "app/api/chat/route.ts:onFinish",
+              message: "save_conversation_failed",
+              data: {
+                conversationId,
+                err:
+                  saveErr instanceof Error
+                    ? saveErr.message
+                    : String(saveErr),
+              },
+              timestamp: Date.now(),
+            }),
+          },
+        ).catch(() => {});
+        // #endregion
+        throw saveErr;
+      }
     },
   });
 }
