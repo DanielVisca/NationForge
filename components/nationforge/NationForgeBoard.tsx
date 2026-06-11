@@ -769,6 +769,9 @@ export default function NationForgeBoard() {
   const [gmStreamText, setGmStreamText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [roomConfirmRemoveId, setRoomConfirmRemoveId] = useState<string | null>(
+    null,
+  );
 
   const [povNationId, setPovNationId] = useState("");
   const [narrative, setNarrative] = useState("");
@@ -1449,6 +1452,42 @@ export default function NationForgeBoard() {
     load,
     getTtsQueue,
   ]);
+
+  /** Seated viewer host controls: remove an unforged seat or force-start the table. */
+  const runHostAction = useCallback(
+    async (
+      action: "removeSeat" | "forceStart",
+      targetNationId?: string,
+    ) => {
+      if (!sessionId || !seatToken) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await fetch(
+          `/api/nationforge/sessions/${sessionId}/host`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              token: seatToken,
+              action,
+              ...(targetNationId ? { targetNationId } : {}),
+            }),
+          },
+        );
+        if (!res.ok) {
+          throw new Error(await readFetchErrorBody(res));
+        }
+        setRoomConfirmRemoveId(null);
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Request failed");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [sessionId, seatToken, load],
+  );
 
   const saveDomesticScratch = useCallback(
     async (value: string) => {
@@ -2613,6 +2652,83 @@ export default function NationForgeBoard() {
                       </li>
                     ))}
                   </ul>
+                  {seatToken && !session.gameStarted ? (
+                    <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/50">
+                      <h4 className="text-[11px] font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+                        Room controls
+                      </h4>
+                      <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                        Clear out seats that abandoned the forge, or open the
+                        table with whoever is ready.
+                      </p>
+                      {session.nationRoster.some((r) => !r.forgeComplete) ? (
+                        <ul className="mt-2 space-y-1.5 text-sm">
+                          {session.nationRoster
+                            .filter((r) => !r.forgeComplete)
+                            .map((r) => (
+                              <li
+                                key={r.id}
+                                className="flex flex-wrap items-center justify-between gap-2"
+                              >
+                                <span className="text-zinc-700 dark:text-zinc-300">
+                                  {r.name}
+                                </span>
+                                {roomConfirmRemoveId === r.id ? (
+                                  <span className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={() =>
+                                        void runHostAction("removeSeat", r.id)
+                                      }
+                                      className="rounded-md bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-50"
+                                    >
+                                      Confirm remove
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={() =>
+                                        setRoomConfirmRemoveId(null)
+                                      }
+                                      className="rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      setRoomConfirmRemoveId(r.id)
+                                    }
+                                    className="rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40"
+                                  >
+                                    Remove seat
+                                  </button>
+                                )}
+                              </li>
+                            ))}
+                        </ul>
+                      ) : null}
+                      {session.nationRoster.some((r) => r.forgeComplete) ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void runHostAction("forceStart")}
+                          className="mt-3 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                        >
+                          Start anyway with forged seats
+                        </button>
+                      ) : null}
+                      {error ? (
+                        <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+                          {error}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </section>
               ) : null}
               {session.gameStarted &&

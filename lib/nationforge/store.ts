@@ -11,6 +11,7 @@ import type {
   PublicTurnLogEntry,
 } from "./public-types";
 import { STAT_KEYS } from "./schema";
+import { forceStartFirstBeat, maybeStartFirstBeat } from "./forge-handlers";
 import { migrateSession } from "./session-migrate";
 import { isOpeningBriefWireMessage } from "./opening-brief-narrative";
 import { playerTurnChatDisplayBody } from "./player-input";
@@ -82,6 +83,104 @@ export async function mutateSessionExclusive(
     applySessionToStoreFile(store, session);
     await io.write(store);
     return { ok: true, session };
+  });
+}
+
+function requesterHasSeat(s: GameSession, requesterToken: string): boolean {
+  return Object.values(s.seatTokens).some((tok) => tok === requesterToken);
+}
+
+/**
+ * Remove an unfinished (unforged) seat that is blocking the table open. Any
+ * seated participant in the room may call this. If removing the seat leaves a
+ * room where every remaining nation is forged (and game not started), the table
+ * opens automatically via maybeStartFirstBeat.
+ */
+export async function removeUnforgedSeat(
+  sessionId: string,
+  requesterToken: string,
+  targetNationId: string,
+): Promise<MutateSessionResult> {
+  return mutateSessionExclusive(sessionId, (s) => {
+    if (!requesterHasSeat(s, requesterToken)) {
+      return { ok: false, status: 403, message: "A valid seat token is required." };
+    }
+    const target = s.nations.find((n) => n.id === targetNationId);
+    if (!target) {
+      return { ok: false, status: 404, message: "Seat not found." };
+    }
+    if (target.forgeComplete) {
+      return {
+        ok: false,
+        status: 400,
+        message: "Only an unfinished (unforged) seat can be removed.",
+      };
+    }
+
+    const nations = s.nations.filter((n) => n.id !== targetNationId);
+
+    const seatTokens = { ...s.seatTokens };
+    delete seatTokens[targetNationId];
+
+    const gmMessagesByNationId = { ...s.gmMessagesByNationId };
+    delete gmMessagesByNationId[targetNationId];
+
+    let lastGmResponseIdByNationId = s.lastGmResponseIdByNationId;
+    if (lastGmResponseIdByNationId && targetNationId in lastGmResponseIdByNationId) {
+      lastGmResponseIdByNationId = { ...lastGmResponseIdByNationId };
+      delete lastGmResponseIdByNationId[targetNationId];
+    }
+
+    const activeNationId =
+      s.activeNationId === targetNationId
+        ? (nations[0]?.id ?? "")
+        : s.activeNationId;
+
+    let next: GameSession = {
+      ...s,
+      nations,
+      seatTokens,
+      gmMessagesByNationId,
+      lastGmResponseIdByNationId,
+      activeNationId,
+    };
+
+    if (
+      next.nations.length >= 1 &&
+      !next.gameStarted &&
+      next.nations.every((n) => n.forgeComplete)
+    ) {
+      next = maybeStartFirstBeat(next);
+    }
+
+    return { ok: true, session: next };
+  });
+}
+
+/**
+ * Open the table now using only the seats that have finished the forge. Any
+ * seated participant may call this. Unforged seats remain as in-progress
+ * builders.
+ */
+export async function forceStartTable(
+  sessionId: string,
+  requesterToken: string,
+): Promise<MutateSessionResult> {
+  return mutateSessionExclusive(sessionId, (s) => {
+    if (!requesterHasSeat(s, requesterToken)) {
+      return { ok: false, status: 403, message: "A valid seat token is required." };
+    }
+    if (s.gameStarted) {
+      return { ok: false, status: 400, message: "The table has already started." };
+    }
+    if (!s.nations.some((n) => n.forgeComplete)) {
+      return {
+        ok: false,
+        status: 400,
+        message: "At least one nation must finish the forge before starting.",
+      };
+    }
+    return { ok: true, session: forceStartFirstBeat(s) };
   });
 }
 

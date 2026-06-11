@@ -28,8 +28,46 @@ const OPENING_ORIENTATION_MARKER =
   "(orientationRequest: first opening beat — crisis choice deferred)";
 
 /**
+ * Drop a trailing un-streamed orphan `user` row from each seat's GM thread.
+ *
+ * Rule (applied per nation): For a seat that is NOT currently streaming, if the
+ * LAST message in its GM thread is role `user`, that user turn never received an
+ * assistant reply (by definition there is nothing after the last element). A new
+ * turn is about to be enqueued, so leaving this row in place would stack a second
+ * consecutive `user` turn (a dead/failed turn from a stream that died before
+ * `onFinish` persisted the assistant reply). Therefore the trailing `user` row is
+ * an orphan and is dropped — regardless of whether it is the opening orientation
+ * beat or a normal turn.
+ *
+ * Safety gate: seats in `session.gmStreamingNationIds` are skipped entirely. A
+ * genuinely in-flight turn adds its seat to `gmStreamingNationIds` in the enqueue
+ * mutation, so at the time this runs (before enqueue) such a row is protected and
+ * is never stripped. We also never touch a thread whose last row is an assistant
+ * delivery (that is not a `user` row, so the rule does not match).
+ */
+export function stripOrphanTrailingUserMessage(session: GameSession): GameSession {
+  const streaming = session.gmStreamingNationIds ?? [];
+  let next = session;
+  let changed = false;
+  for (const n of session.nations) {
+    if (streaming.includes(n.id)) continue;
+    const msgs = getNationGmMessages(next, n.id);
+    if (msgs.length === 0) continue;
+    const last = msgs[msgs.length - 1]!;
+    if (last.role !== "user") continue;
+    next = withNationGmMessages(next, n.id, msgs.slice(0, -1));
+    changed = true;
+  }
+  return changed ? next : session;
+}
+
+/**
  * If the last GM-thread message is an opening-brief user turn but no assistant
  * prose ever landed, drop it so the client can resend (e.g. stream died).
+ *
+ * Kept for callers/tests that import it; this is the opening-marker special case
+ * of {@link stripOrphanTrailingUserMessage}, which is the superset used at
+ * enqueue time.
  */
 export function stripOrphanOpeningUserMessage(session: GameSession): GameSession {
   if (!session.crisis) return session;

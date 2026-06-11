@@ -30,6 +30,21 @@ function normalizePublicNarrative(text: string): string {
   return trimmed || EMPTY_PUBLIC_FALLBACK;
 }
 
+// Fail-safe heuristic. This is ONLY used in the catch/fallback below, when the
+// LLM classifier is unavailable. It is a cheap, case-insensitive whole-word /
+// phrase scan for obvious confidentiality cues so that prose describing covert
+// activity does not leak into the public/GM-shared path while the classifier is
+// offline. It is intentionally conservative (high-signal terms only) and is NOT
+// a substitute for the real classifier on the happy path.
+const CONFIDENTIALITY_CUE_REGEX =
+  /\b(?:secret(?:ly)?|covert(?:ly)?|classified|confidential|in\s+secret|behind\s+closed\s+doors|without\s+anyone\s+knowing|do\s+not\s+reveal|keep\s+this\s+hidden|off\s+the\s+books|clandestine|deniabl|false\s+flag|assassinat|sabotage|spy|espionage|black\s+ops|under\s+the\s+table)\b/i;
+
+const OFFLINE_PUBLIC_PLACEHOLDER = "(This nation acted; details withheld.)";
+
+function narrativeHasConfidentialityCues(narrative: string): boolean {
+  return CONFIDENTIALITY_CUE_REGEX.test(narrative);
+}
+
 function explicitSecretForPayload(
   payload: PlayerTurnPayload,
   nation: Nation,
@@ -129,6 +144,35 @@ export async function preparePlayerTurnForPersistence(
       secrets: [...explicitSecrets, ...classifiedSecrets],
     };
   } catch {
+    // Classifier is offline. Always keep the explicit secretAction secret (as
+    // on the happy path). Additionally apply the local cue heuristic: if the
+    // narrative contains obvious confidentiality cues, fail SAFE by treating the
+    // WHOLE narrative as confidential for this turn — the full prose is captured
+    // in an extra GameSecret and the public payload is reduced to a neutral
+    // placeholder so nothing sensitive leaks. When no cues are present we behave
+    // exactly like the prior fallback (narrative stays public) so ordinary turns
+    // are unaffected.
+    const narrative = payload.narrative.trim();
+    if (narrative && narrativeHasConfidentialityCues(narrative)) {
+      return {
+        publicPayload: {
+          ...payload,
+          narrative: OFFLINE_PUBLIC_PLACEHOLDER,
+          secretAction: undefined,
+        },
+        secrets: [
+          ...explicitSecrets,
+          {
+            id: randomUUID(),
+            nationId: payload.povNationId,
+            label: `${nation.name}: Possibly confidential (classifier offline)`,
+            content: narrative,
+            revealed: false,
+          },
+        ],
+      };
+    }
+
     return {
       publicPayload: {
         ...payload,

@@ -60,7 +60,7 @@ function nationIndexByToken(session: GameSession, token: string): number {
   return -1;
 }
 
-function maybeStartFirstBeat(s: GameSession): GameSession {
+export function maybeStartFirstBeat(s: GameSession): GameSession {
   if (s.gameStarted) return s;
   if (s.nations.length === 0) return s;
   if (!s.nations.every((n) => n.forgeComplete)) return s;
@@ -71,6 +71,24 @@ function maybeStartFirstBeat(s: GameSession): GameSession {
     crisis: starterCrisisForNations(ids),
     phase: "awaiting_decision",
     activeNationId: s.activeNationId || ids[0]!,
+  };
+}
+
+/**
+ * Recovery path for soft-locked tables: open the table using ONLY the seats
+ * that have finished the forge. Unforged seats stay in the room as in-progress
+ * builders (validatePlayerTurn blocks their turns until forgeComplete). Pure.
+ */
+export function forceStartFirstBeat(s: GameSession): GameSession {
+  if (s.gameStarted) return s;
+  const forgedIds = s.nations.filter((n) => n.forgeComplete).map((n) => n.id);
+  if (forgedIds.length === 0) return s;
+  return {
+    ...s,
+    gameStarted: true,
+    crisis: starterCrisisForNations(forgedIds),
+    phase: "awaiting_decision",
+    activeNationId: s.activeNationId || forgedIds[0]!,
   };
 }
 

@@ -16,7 +16,7 @@ import { lastAssistantTextProseFromMessages } from "@/lib/nationforge/assistant-
 import {
   formatPlayerTurnMessage,
   recoverStaleGmRunningPhase,
-  stripOrphanOpeningUserMessage,
+  stripOrphanTrailingUserMessage,
   type PlayerTurnPayload,
   validatePlayerTurn,
 } from "@/lib/nationforge/player-input";
@@ -242,7 +242,7 @@ export async function POST(req: Request) {
 
   const stripResult = await mutateSessionExclusive(body.sessionId, (s) => {
     const cleaned = repairAllGmThreadsInSession(
-      recoverStaleGmRunningPhase(stripOrphanOpeningUserMessage(s)),
+      recoverStaleGmRunningPhase(stripOrphanTrailingUserMessage(s)),
     );
     return { ok: true, session: cleaned };
   });
