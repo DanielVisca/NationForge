@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { UIMessage } from "ai";
 
@@ -26,6 +26,17 @@ type StoreFile = {
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 const STORE_PATH = path.join(DATA_DIR, "conversations.json");
+
+let storeWriteChain: Promise<unknown> = Promise.resolve();
+
+async function withLockedStore<T>(task: () => Promise<T>): Promise<T> {
+  const next = storeWriteChain.then(() => task());
+  storeWriteChain = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
 
 async function ensureDataDir(): Promise<void> {
   await mkdir(DATA_DIR, { recursive: true });
@@ -65,7 +76,19 @@ function withStableMessageIds(messages: UIMessage[]): UIMessage[] {
 
 async function writeStore(store: StoreFile): Promise<void> {
   await ensureDataDir();
-  await writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf-8");
+  const json = JSON.stringify(store, null, 2);
+  const tmp = path.join(DATA_DIR, `conv-${randomUUID()}.tmp.json`);
+  try {
+    await writeFile(tmp, json, "utf-8");
+    await rename(tmp, STORE_PATH);
+  } catch (e) {
+    try {
+      await unlink(tmp);
+    } catch {
+      /* ignore */
+    }
+    throw e;
+  }
 }
 
 function titleFromMessages(messages: UIMessage[]): string {
@@ -119,18 +142,20 @@ export async function getConversation(
 }
 
 export async function createConversation(): Promise<StoredConversation> {
-  const store = await readStore();
-  const id = randomUUID();
-  const now = new Date().toISOString();
-  const conv: StoredConversation = {
-    id,
-    title: "New chat",
-    messages: [],
-    updatedAt: now,
-  };
-  store.conversations[id] = conv;
-  await writeStore(store);
-  return conv;
+  return withLockedStore(async () => {
+    const store = await readStore();
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const conv: StoredConversation = {
+      id,
+      title: "New chat",
+      messages: [],
+      updatedAt: now,
+    };
+    store.conversations[id] = conv;
+    await writeStore(store);
+    return conv;
+  });
 }
 
 export async function saveConversationPatch(
@@ -139,19 +164,21 @@ export async function saveConversationPatch(
     Pick<StoredConversation, "messages" | "lastResponseId" | "title">
   >,
 ): Promise<StoredConversation | undefined> {
-  const store = await readStore();
-  const existing = store.conversations[id];
-  if (!existing) return undefined;
+  return withLockedStore(async () => {
+    const store = await readStore();
+    const existing = store.conversations[id];
+    if (!existing) return undefined;
 
-  const messages = patch.messages ?? existing.messages;
-  const updated: StoredConversation = {
-    ...existing,
-    ...patch,
-    messages,
-    title: patch.title ?? titleFromMessages(messages),
-    updatedAt: new Date().toISOString(),
-  };
-  store.conversations[id] = updated;
-  await writeStore(store);
-  return updated;
+    const messages = patch.messages ?? existing.messages;
+    const updated: StoredConversation = {
+      ...existing,
+      ...patch,
+      messages,
+      title: patch.title ?? titleFromMessages(messages),
+      updatedAt: new Date().toISOString(),
+    };
+    store.conversations[id] = updated;
+    await writeStore(store);
+    return updated;
+  });
 }

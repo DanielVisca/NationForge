@@ -11,7 +11,7 @@ import {
   type StatDeltas,
   validateReallocBudget,
 } from "./validation";
-import { getGameSession, saveGameSession, updateGameSession } from "./store";
+import { updateGameSession } from "./store";
 
 const statDeltaSchema = z
   .object({
@@ -42,9 +42,6 @@ export function createNationForgeTools(
         .describe("Change to reserve (negative spends reserve)"),
     }),
     execute: async ({ nationId, deltas, reserveDelta }) => {
-      const session = await getGameSession(sessionId);
-      if (!session) return { ok: false as const, error: "Session not found" };
-
       const deltasClean = Object.fromEntries(
         Object.entries(deltas).filter(
           ([k, v]) =>
@@ -55,47 +52,58 @@ export function createNationForgeTools(
       const v = validateReallocBudget(deltasClean, reserveDelta);
       if (!v.ok) return { ok: false as const, error: v.reason };
 
-      const idx = session.nations.findIndex((n) => n.id === nationId);
-      if (idx === -1) return { ok: false as const, error: "Unknown nationId" };
+      let failReason: string | null = null;
+      let updatedNation: Nation | null = null;
+      const updatedSession = await updateGameSession(sessionId, (s) => {
+        const idx = s.nations.findIndex((n) => n.id === nationId);
+        if (idx === -1) {
+          failReason = "Unknown nationId";
+          return;
+        }
 
-      const nation = session.nations[idx];
-      const newReserve = nation.reserve + reserveDelta;
-      if (newReserve < 0) {
-        return { ok: false as const, error: "Reserve cannot go negative" };
-      }
+        const nation = s.nations[idx];
+        const newReserve = nation.reserve + reserveDelta;
+        if (newReserve < 0) {
+          failReason = "Reserve cannot go negative";
+          return;
+        }
 
-      const newStats = applyDeltasToStats(nation.stats, deltasClean);
-      const updated: Nation = {
-        ...nation,
-        stats: newStats,
-        reserve: newReserve,
-      };
-      const nations = [...session.nations];
-      nations[idx] = updated;
-      const nonZeroDeltas = Object.fromEntries(
-        Object.entries(deltasClean).filter(([, v]) => v !== 0),
-      );
-      const hasImpact =
-        Object.keys(nonZeroDeltas).length > 0 || reserveDelta !== 0;
-      const statImpacts = hasImpact
-        ? [
-            ...session.statImpacts,
+        const newStats = applyDeltasToStats(nation.stats, deltasClean);
+        const updated: Nation = {
+          ...nation,
+          stats: newStats,
+          reserve: newReserve,
+        };
+        s.nations[idx] = updated;
+        updatedNation = updated;
+
+        const nonZeroDeltas = Object.fromEntries(
+          Object.entries(deltasClean).filter(([, v]) => v !== 0),
+        );
+        const hasImpact =
+          Object.keys(nonZeroDeltas).length > 0 || reserveDelta !== 0;
+        if (hasImpact) {
+          s.statImpacts = [
+            ...s.statImpacts,
             {
               id: randomUUID(),
               at: new Date().toISOString(),
-              roundIndex: session.roundIndex,
+              roundIndex: s.roundIndex,
               nationId,
               deltas: nonZeroDeltas,
               reserveDelta,
             },
-          ].slice(-MAX_STAT_IMPACTS_STORED)
-        : session.statImpacts;
-      await saveGameSession({ ...session, nations, statImpacts });
+          ].slice(-MAX_STAT_IMPACTS_STORED);
+        }
+      });
+      if (!updatedSession) return { ok: false as const, error: "Session not found" };
+      if (failReason) return { ok: false as const, error: failReason };
+      const nation = updatedNation!;
       return {
         ok: true as const,
         nationId,
-        stats: updated.stats,
-        reserve: updated.reserve,
+        stats: nation.stats,
+        reserve: nation.reserve,
       };
     },
   });
@@ -125,9 +133,6 @@ export function createNationForgeTools(
       privateByNationId,
       privateText,
     }) => {
-      const session = await getGameSession(sessionId);
-      if (!session) return { ok: false as const, error: "Session not found" };
-
       const entry: TurnLogEntry = {
         id: randomUUID(),
         at: new Date().toISOString(),
@@ -138,10 +143,10 @@ export function createNationForgeTools(
             ? { [privateByNationId]: privateText }
             : undefined,
       };
-      await saveGameSession({
-        ...session,
-        turnLog: [...session.turnLog, entry],
+      const updated = await updateGameSession(sessionId, (s) => {
+        s.turnLog = [...s.turnLog, entry];
       });
+      if (!updated) return { ok: false as const, error: "Session not found" };
       return { ok: true as const, id: entry.id };
     },
   });
@@ -230,13 +235,33 @@ export function createNationForgeTools(
       severity,
       privateNotes,
     }) => {
-      const session = await getGameSession(sessionId);
-      if (!session) return { ok: false as const, error: "Session not found" };
+      const recordId = randomUUID();
+      let dropped: string[] = [];
+      let noValidIds = false;
+      const updated = await updateGameSession(sessionId, (s) => {
+        const validIds = new Set(s.nations.map((n) => n.id));
+        dropped = affectedNationIds.filter((id) => !validIds.has(id));
+        const filtered = affectedNationIds.filter((id) => validIds.has(id));
+        if (filtered.length === 0) {
+          noValidIds = true;
+          return;
+        }
 
-      const validIds = new Set(session.nations.map((n) => n.id));
-      const dropped = affectedNationIds.filter((id) => !validIds.has(id));
-      const filtered = affectedNationIds.filter((id) => validIds.has(id));
-      if (filtered.length === 0) {
+        const record: EmergentEventRecord = {
+          id: recordId,
+          at: new Date().toISOString(),
+          eventTitle,
+          description,
+          affectedNationIds: filtered,
+          severity,
+          privateNotes: privateNotes?.trim() || undefined,
+        };
+        s.emergentEvents = [...s.emergentEvents, record].slice(
+          -MAX_EMERGENT_EVENTS_STORED,
+        );
+      });
+      if (!updated) return { ok: false as const, error: "Session not found" };
+      if (noValidIds) {
         return {
           ok: false as const,
           error:
@@ -244,23 +269,9 @@ export function createNationForgeTools(
           droppedUnknownNationIds: dropped,
         };
       }
-
-      const record: EmergentEventRecord = {
-        id: randomUUID(),
-        at: new Date().toISOString(),
-        eventTitle,
-        description,
-        affectedNationIds: filtered,
-        severity,
-        privateNotes: privateNotes?.trim() || undefined,
-      };
-      const emergentEvents = [...session.emergentEvents, record].slice(
-        -MAX_EMERGENT_EVENTS_STORED,
-      );
-      await saveGameSession({ ...session, emergentEvents });
       return {
         ok: true as const,
-        id: record.id,
+        id: recordId,
         droppedUnknownNationIds: dropped.length ? dropped : undefined,
       };
     },
@@ -274,9 +285,6 @@ export function createNationForgeTools(
       content: z.string(),
     }),
     execute: async ({ nationId, label, content }) => {
-      const session = await getGameSession(sessionId);
-      if (!session) return { ok: false as const, error: "Session not found" };
-
       const secret = {
         id: randomUUID(),
         nationId,
@@ -284,10 +292,10 @@ export function createNationForgeTools(
         content,
         revealed: false,
       };
-      await saveGameSession({
-        ...session,
-        secrets: [...session.secrets, secret],
+      const updated = await updateGameSession(sessionId, (s) => {
+        s.secrets = [...s.secrets, secret];
       });
+      if (!updated) return { ok: false as const, error: "Session not found" };
       return { ok: true as const, secretId: secret.id };
     },
   });

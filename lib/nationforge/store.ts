@@ -321,7 +321,14 @@ export function filterSessionForClient(
       }
     }
   }
-  const effectiveViewer = viewerNationId ?? nationFromToken;
+  // SECURITY: the effective viewer must come ONLY from the seat token. The
+  // `viewerNationId` query hint may never override the token-derived identity;
+  // it is honored solely when it strictly equals the token's nation. A request
+  // with `viewerNationId` but no valid token resolves to a spectator (null).
+  const effectiveViewer =
+    nationFromToken && viewerNationId === nationFromToken
+      ? viewerNationId
+      : nationFromToken;
 
   const secrets: PublicSecret[] = s.secrets.map((sec) => {
     if (sec.revealed) {
