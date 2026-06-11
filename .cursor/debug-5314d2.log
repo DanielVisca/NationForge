@@ -1,2 +1,0 @@
-{"sessionId":"5314d2","hypothesisId":"D","location":"NationForgeBoard.tsx:tts:inflection","message":"enqueue inflection after GM pass","data":{"crisisId":"79bf6e05","plainLen":239,"nChunks":1},"timestamp":1776900150876}
-{"sessionId":"5314d2","hypothesisId":"C","location":"NationForgeBoard.tsx:tts:gm","message":"enqueue GM prose","data":{"msgIndex":5,"proseLen":1274,"plainLen":1262,"stripDelta":12,"nChunks":1},"timestamp":1776900153035}

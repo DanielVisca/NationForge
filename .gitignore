@@ -47,3 +47,7 @@ next-env.d.ts
 
 # local conversation store
 .data/
+
+# local editor / assistant state
+.cursor/
+.claude/
