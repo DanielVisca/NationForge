@@ -848,6 +848,9 @@ export default function NationForgeBoard() {
   const domesticDirtyRef = useRef(false);
   const domesticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  /** True while the viewer is following at the bottom; updated on manual scroll. */
+  const transcriptAtBottomRef = useRef(true);
 
   const [diplomacyToId, setDiplomacyToId] = useState("");
   const [diplomacyMessage, setDiplomacyMessage] = useState("");
@@ -1244,12 +1247,23 @@ export default function NationForgeBoard() {
     myLatestStatImpact,
   ]);
 
+  // Auto-scroll only when the VIEWER's own transcript advances (a new message in
+  // their thread, or their in-flight stream growing) — never on session.updatedAt,
+  // which bumps on every other player's beat and used to yank this viewer's view.
+  // And only when the viewer is already following at the bottom, so a user who
+  // scrolled up to read is never pulled away.
+  const viewerTranscriptRevision = `${session?.gmMessages?.length ?? 0}:${
+    typeof session?.gmMessages?.at(-1)?.id === "string"
+      ? session?.gmMessages?.at(-1)?.id
+      : ""
+  }`;
   useEffect(() => {
+    if (!transcriptAtBottomRef.current) return;
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [
-    session?.gmMessages?.length,
-    session?.updatedAt,
+    viewerTranscriptRevision,
     gmStreamText,
+    gmComposing,
   ]);
 
   useEffect(() => {
@@ -2302,6 +2316,12 @@ export default function NationForgeBoard() {
                 </div>
               ) : null}
               <div
+                ref={transcriptScrollRef}
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  transcriptAtBottomRef.current =
+                    el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+                }}
                 className={`flex-1 space-y-3 overflow-y-auto rounded-xl border border-zinc-200/80 bg-zinc-50/90 p-3 dark:border-zinc-700 dark:bg-zinc-900/50 ${
                   usePlayGrid ? "min-h-0" : "min-h-[260px]"
                 }`}
