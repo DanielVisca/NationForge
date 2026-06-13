@@ -21,6 +21,7 @@ import {
   validatePlayerTurn,
 } from "@/lib/nationforge/player-input";
 import { rateLimitNationForgeTurn } from "@/lib/nationforge/rate-limit";
+import { runStatAdjudication } from "@/lib/nationforge/stat-adjudicator";
 import {
   repairAllGmThreadsInSession,
   repairNationGmThreadMessages,
@@ -466,6 +467,30 @@ export async function POST(req: Request) {
               pov,
             ),
           );
+
+          // Best-effort silent stat reconciliation. Runs AFTER the main save so
+          // the committed beat is never affected, and its own locked
+          // updateGameSession would otherwise be clobbered by the whole-session
+          // saveGameSession above. Isolated in its own try/catch so an
+          // adjudicator failure can NEVER reach the outer catch (rollback).
+          try {
+            const gmAlreadyMovedStats = steps.some((step) =>
+              (step.toolCalls ?? []).some(
+                (call) => call.toolName === "apply_stat_deltas",
+              ),
+            );
+            await runStatAdjudication({
+              sessionId: body.sessionId,
+              povNationId: pov,
+              beatProse: lastAssistantTextProseFromMessages(finalMessages),
+              gmAlreadyMovedStats,
+            });
+          } catch (adjErr) {
+            console.error(
+              "[nationforge/turn] stat adjudication error (ignored)",
+              adjErr,
+            );
+          }
         } catch (e) {
           console.error("[nationforge/turn] onFinish error", e);
           await rollbackOngoingGmTurn(body.sessionId, pov, "onFinish");

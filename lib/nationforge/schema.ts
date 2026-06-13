@@ -156,6 +156,56 @@ export type EmergentEventRecord = {
 export const MAX_EMERGENT_EVENTS_STORED = 50;
 export const MAX_STAT_IMPACTS_STORED = 120;
 
+/** Living World — cross-nation interaction ledger kind. */
+export type InteractionKind =
+  | "diplomacy"
+  | "aid"
+  | "trade"
+  | "threat"
+  | "military"
+  | "covert"
+  | "info"
+  | "other";
+
+/** Whether an interaction is aimed at specific targets or broadcast to the table. */
+export type InteractionVisibility = "directed" | "public";
+
+/** Lifecycle of an interaction as targets fold it into their own beats. */
+export type InteractionStatus =
+  | "pending"
+  | "acknowledged"
+  | "resolved"
+  | "stale";
+
+/** One cross-nation action attempted by a nation (player prose or GM narration). */
+export type InteractionRecord = {
+  id: string;
+  /** ISO timestamp. */
+  at: string;
+  /** session.roundIndex at creation. */
+  round: number;
+  fromNationId: string;
+  /** one→many targets */
+  toNationIds: string[];
+  kind: InteractionKind;
+  /** short, third-person: what was attempted */
+  summary: string;
+  /** optional per-target private framing */
+  detailByNation?: Record<string, string>;
+  origin: "player_prose" | "gm_narration";
+  visibility: InteractionVisibility;
+  status: InteractionStatus;
+  /** target nation ids that have folded it into a beat */
+  acknowledgedBy: string[];
+};
+
+/** Caps for the Living World interaction ledger / prompt budgeting. */
+export const MAX_INTERACTIONS_STORED = 120;
+export const MAX_INBOUND_IN_PROMPT = 6;
+export const DIPLO_PER_RELATIONSHIP_TAIL = 8;
+/** Clip for the per-nation trajectory string. */
+export const MAX_TRAJECTORY_LENGTH = 240;
+
 export type GameSession = {
   id: string;
   /** Short code for LAN join */
@@ -198,6 +248,10 @@ export type GameSession = {
   emergentEvents: EmergentEventRecord[];
   /** Numeric stat/reserve impacts from apply_stat_deltas, shown in player-facing stat UI. */
   statImpacts: StatImpactRecord[];
+  /** Living World — append-only canonical cross-nation ledger; hydrate to [] in session-migrate; capped. */
+  interactions: InteractionRecord[];
+  /** Optional one-line "current direction" per nation, maintained by the stat adjudicator. */
+  trajectoryByNation?: Record<string, string>;
 };
 
 export const MAX_REALLOC_POINTS_PER_TURN = 10;

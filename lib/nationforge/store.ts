@@ -284,6 +284,7 @@ export async function createGameSession(): Promise<GameSession> {
       emergentEvents: [],
       statImpacts: [],
       tableEvents: [],
+      interactions: [],
     };
     store.sessions[id] = session;
     store.roomIndex[roomCode] = id;

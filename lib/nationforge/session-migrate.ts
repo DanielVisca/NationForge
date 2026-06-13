@@ -1,7 +1,13 @@
 import type { UIMessage } from "ai";
 
 import { migrateForgeWizardProgress } from "./nation-forge-catalog";
-import type { GameSession, Nation, NationForgeProgress, StatImpactRecord } from "./schema";
+import type {
+  GameSession,
+  InteractionRecord,
+  Nation,
+  NationForgeProgress,
+  StatImpactRecord,
+} from "./schema";
 import { ensureGmMessagesByNationId } from "./gm-threads";
 
 function hasAssistantReply(messages: UIMessage[]): boolean {
@@ -108,6 +114,15 @@ export function migrateSession(session: GameSession): GameSession {
 
   const tableEvents = Array.isArray(s.tableEvents) ? s.tableEvents : [];
 
+  const interactions: InteractionRecord[] = Array.isArray(s.interactions)
+    ? s.interactions
+    : [];
+
+  const trajectoryByNation =
+    s.trajectoryByNation && typeof s.trajectoryByNation === "object"
+      ? s.trajectoryByNation
+      : {};
+
   const gmStreamingNationIds = Array.isArray(
     (s as GameSession & { gmStreamingNationIds?: unknown }).gmStreamingNationIds,
   )
@@ -121,6 +136,8 @@ export function migrateSession(session: GameSession): GameSession {
     emergentEvents,
     statImpacts,
     tableEvents,
+    interactions,
+    trajectoryByNation,
     gmStreamingNationIds,
   });
 }
