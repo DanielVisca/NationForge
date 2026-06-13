@@ -128,3 +128,51 @@ export function formatInboundForPrompt(
   return `PENDING INBOUND — other nations have ACTED TOWARD YOU and you have not yet responded. You MUST acknowledge and fold these into THIS beat (accept, refuse, counter, stall, or react in-world). Do not pretend they did not happen, and never claim "silence" when an item is listed here:
 ${lines.join("\n")}${more}`;
 }
+
+/**
+ * Overtures THIS nation has SENT that a target has not yet acknowledged — i.e.
+ * it is waiting on a reply. Most-recent first. Drives the "handle silence well"
+ * prompt hook and the in-app "awaiting reply" notifications.
+ */
+export function outstandingOutboundForNation(
+  session: GameSession,
+  nationId: string,
+): InteractionRecord[] {
+  const list = (session.interactions ?? []).filter(
+    (i) =>
+      i.fromNationId === nationId &&
+      i.status !== "resolved" &&
+      i.status !== "stale" &&
+      i.toNationIds.some((t) => !i.acknowledgedBy.includes(t)),
+  );
+  return list.slice().reverse();
+}
+
+/**
+ * Render the "OUTSTANDING OUTREACH" prompt block: overtures the pov nation sent
+ * that are still unanswered, with age, so the GM frames silence proportionally
+ * and never invents the other player's reply. Returns "" if none.
+ */
+export function formatOutstandingOutboundForPrompt(
+  session: GameSession,
+  nationId: string,
+): string {
+  const outstanding = outstandingOutboundForNation(session, nationId);
+  if (outstanding.length === 0) return "";
+
+  const nameById = new Map(session.nations.map((n) => [n.id, n.name]));
+  const shown = outstanding.slice(0, MAX_INBOUND_IN_PROMPT);
+  const lines = shown.map((i) => {
+    const unanswered = i.toNationIds
+      .filter((t) => !i.acknowledgedBy.includes(t))
+      .map((t) => nameById.get(t) ?? t);
+    const age = Math.max(0, (session.roundIndex ?? 0) - i.round);
+    const ageText = age <= 0 ? "this beat" : `${age} beat(s) ago`;
+    return `- To ${unanswered.join(", ")} (${i.kind}, sent ${ageText}): ${i.summary} — no reply yet`;
+  });
+  const extra = outstanding.length - shown.length;
+  const more = extra > 0 ? `\n- (+${extra} more awaiting reply)` : "";
+
+  return `OUTSTANDING OUTREACH — overtures THIS nation has sent that the target has NOT answered. Treat them as genuinely unanswered: portray the waiting/silence in proportion to how long it has been (a fresh dispatch vs. weeks of quiet), keep this nation free to act unilaterally meanwhile, and do NOT invent the other player's reply, agreement, or any commitment on their behalf.
+${lines.join("\n")}${more}`;
+}

@@ -1096,6 +1096,13 @@ export default function NationForgeBoard() {
     return session.pendingInbound ?? [];
   }, [session?.viewerNationId, session?.pendingInbound]);
 
+  // Overtures the viewer nation SENT that a target hasn't answered yet. Empty
+  // for spectators (no viewer nation) per the session payload.
+  const outstandingOutbound = useMemo(() => {
+    if (!session?.viewerNationId) return [];
+    return session.outstandingOutbound ?? [];
+  }, [session?.viewerNationId, session?.outstandingOutbound]);
+
   useEffect(() => {
     if (!otherNations.length) return;
     if (!diplomacyToId || !otherNations.some((n) => n.id === diplomacyToId)) {
@@ -1943,23 +1950,59 @@ export default function NationForgeBoard() {
         </div>
       ) : null}
 
-      {session.viewerNationId && pendingInbound.length > 0 ? (
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50/90 px-4 py-3 text-sm text-indigo-950 shadow-sm dark:border-indigo-900/45 dark:bg-indigo-950/35 dark:text-indigo-50">
-          <p className="font-semibold">
-            📨 {pendingInbound.length} incoming overture
-            {pendingInbound.length === 1 ? "" : "s"} awaiting your word
-          </p>
-          <ul className="mt-1.5 space-y-1 text-xs text-indigo-900/90 dark:text-indigo-100/85">
-            {pendingInbound.slice(0, 4).map((item) => (
-              <li key={item.id}>
-                <span className="font-medium">{item.fromName}</span> — {item.summary}
-              </li>
-            ))}
-          </ul>
-          {pendingInbound.length > 4 ? (
-            <p className="mt-1 text-[11px] text-indigo-800/80 dark:text-indigo-200/75">
-              +{pendingInbound.length - 4} more
-            </p>
+      {session.viewerNationId &&
+      (pendingInbound.length > 0 || outstandingOutbound.length > 0) ? (
+        <div className="space-y-2">
+          {pendingInbound.length > 0 ? (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/90 px-4 py-3 text-sm text-indigo-950 shadow-sm dark:border-indigo-900/45 dark:bg-indigo-950/35 dark:text-indigo-50">
+              <p className="font-semibold">
+                📨 {pendingInbound.length} incoming overture
+                {pendingInbound.length === 1 ? "" : "s"} awaiting your word
+              </p>
+              <ul className="mt-1.5 space-y-1 text-xs text-indigo-900/90 dark:text-indigo-100/85">
+                {pendingInbound.slice(0, 4).map((item) => (
+                  <li key={item.id}>
+                    <span className="font-medium">{item.fromName}</span> — {item.summary}
+                  </li>
+                ))}
+              </ul>
+              {pendingInbound.length > 4 ? (
+                <p className="mt-1 text-[11px] text-indigo-800/80 dark:text-indigo-200/75">
+                  +{pendingInbound.length - 4} more
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {outstandingOutbound.length > 0 ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 text-sm text-slate-800 shadow-sm dark:border-slate-700/50 dark:bg-slate-900/40 dark:text-slate-200">
+              <p className="font-semibold">
+                ⏳ {outstandingOutbound.length} overture
+                {outstandingOutbound.length === 1 ? "" : "s"} awaiting reply
+              </p>
+              <ul className="mt-1.5 space-y-1 text-xs text-slate-600/95 dark:text-slate-300/85">
+                {outstandingOutbound.slice(0, 4).map((item) => {
+                  const beats = session.roundIndex - item.round;
+                  return (
+                    <li key={item.id}>
+                      <span className="font-medium">{item.toNames.join("/")}</span> —{" "}
+                      {item.summary}
+                      {beats > 0 ? (
+                        <span className="text-slate-500 dark:text-slate-400">
+                          {" "}
+                          · sent {beats} beat{beats === 1 ? "" : "s"} ago
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+              {outstandingOutbound.length > 4 ? (
+                <p className="mt-1 text-[11px] text-slate-500/90 dark:text-slate-400/80">
+                  +{outstandingOutbound.length - 4} more
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

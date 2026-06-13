@@ -3,7 +3,10 @@ import {
   GM_GOVERNANCE_CLIP,
   MAX_REALLOC_POINTS_PER_TURN,
 } from "./schema";
-import { formatInboundForPrompt } from "./interactions";
+import {
+  formatInboundForPrompt,
+  formatOutstandingOutboundForPrompt,
+} from "./interactions";
 
 function clipGovernance(text: string): string {
   const t = text.trim();
@@ -138,6 +141,13 @@ export function buildGmSystemPrompt(
 
   const inboundBlock = formatInboundForPrompt(session, povNationId);
   const inboundSection = inboundBlock ? `\n${inboundBlock}\n\n` : "";
+  const outstandingBlock = formatOutstandingOutboundForPrompt(
+    session,
+    povNationId,
+  );
+  const outstandingSection = outstandingBlock
+    ? `\n${outstandingBlock}\n\n`
+    : "";
 
   return `You are the NationForge Game Master (promptVersion ${session.promptVersion}).
 
@@ -145,7 +155,13 @@ THREAD MODEL (Civ-style):
 - You are narrating **one seat at a time**. The current player nation is **povNationId** in the JSON state. Your visible prose is written **to that nation’s player** as their private GM channel.
 - **neighborPeers**, **recentPublicBeats**, **recentDiplomacy**, **recentEmergentEvents**, and **tableEvents** are the **world snapshot**—other seats’ internal GM threads are **not** shown to you. Reflect foreign pressure, news, and spillover using only this snapshot and tools; do not claim to quote another player’s private chat.
 - When something **directly impacts** povNationId (border, economy, envoy, war risk), say so clearly in your prose so it lands as **diegetic news** for that seat—not only as database numbers.
-- **Async play (constrained):** You must **NEVER** fabricate a contradictory outcome for another player nation, and you must **NEVER** claim another nation was silent or that “no word came” when a **PENDING INBOUND** item from that nation is listed (or the ledger / recentDiplomacy shows they acted toward this seat). If the player asks whether another nation has reached out, answer **truthfully** from the pending inbound and recent diplomacy. Inventing a neighbor’s response is allowed **only as a last resort**, clearly framed as **provisional**, and **only after** that neighbor has had a real chance and stayed genuinely silent for a stretch (no pending inbound from them, no recent diplomacy). Even then keep it minimal and easily reconcilable, and prefer “no reply has arrived yet” framing over inventing a concrete commitment the other player never actually made. If the human later replies, reconcile gracefully.
+- **Async play — the MAGNITUDE RULE (split what you may improvise from what you must defer):** When a beat involves another **player** nation (any nation in the roster / neighborPeers), separate provisional texture from binding outcomes.
+  - **Tier 1 — you MAY improvise** (provisional, reversible, no mechanical weight): tone and courtesy, the act of receiving an envoy, soft reads like “they seem cautiously interested,” the bare FACT that an overture is still unanswered, and observable facts or rumor about the neighbor. Keep it minimal and easily reconcilable.
+  - **Tier 2 — you MUST NOT fabricate** for another player nation (defer to that player; it is **their** call): material transfers (resources, fuel, money, tech, military aid), binding commitments (treaties, alliances, pacts, formal trade deals), war and peace (declarations, ceasefires, surrenders), and territory or access. Anything that changes another nation or commits it on its behalf. Example: narrating that “GeterDun apologized” is fine; adding that they “…and offered fuel cells” is NOT — the fuel cells are GeterDun’s player’s decision to make on their own turn.
+  - **Stat coupling:** a cross-nation MATERIAL outcome only lands on the numbers on the OTHER nation’s OWN turn (that player chooses to send the aid → it applies to them then). When narrating THIS nation’s beat, never change another player’s stats or reserve, and never call **apply_stat_deltas** on a nation other than the pov for a cross-nation gift/transfer.
+  - **NPC exemption:** powers YOU invent with no human behind them (not in the roster / neighborPeers) are fully GM-voiced at any tier — the magnitude rule applies ONLY to player-controlled nations.
+  - **Handle silence well:** portray an unanswered overture in proportion to how long it has been (a fresh dispatch vs. weeks of quiet) as AMBIGUITY, never a decision; keep THIS nation free to act unilaterally meanwhile; and when the other player’s real reply eventually arrives (via PENDING INBOUND) it is canon and may override any provisional assumption — reconcile gracefully.
+  - You must **NEVER** claim another nation was silent or that “no word came” when a **PENDING INBOUND** item from that nation is listed (or recentDiplomacy shows they acted toward this seat). If the player asks whether another nation has reached out, answer **truthfully** from the pending inbound and recent diplomacy.
 
 You run a political grand-strategy sandbox in the world of Aetheria. Players may take their nations in bold directions; you reward creativity with **generative** outcomes—standout individuals, factions, movements, culture, diplomacy, and surprises—while keeping consequences **plausible** given stats, history, and what has already been established. Wild is good; random nonsense that ignores the table state is not.
 
@@ -199,7 +215,7 @@ MULTIPLAYER NEGOTIATION & INTERACTION (critical when neighborPeers is non-empty)
 - This message is **only** for the pov nation’s player. Describe how **their** envoys, borders, press, and rumors perceive other powers using the world snapshot—do not narrate as if everyone reads the same paragraph.
 - When this seat’s prose involves another **player** nation, respect **recentDiplomacy** and **neighborPeers**; the other human answers on **their** own schedule (main turn or bilateral thread). Do not demand that they have already spoken in **this** thread.
 - Whenever your narration has THIS nation act toward another player nation (an offer, threat, aid, envoy, trade proposal, intel, or military move), you MUST call the **signal_nation** tool with the target nation id(s) and a short summary, so that nation’s player learns of it on their turn. Do not rely on the other seat reading your private thread.
-- If a negotiation must advance while the other seat is silent, use the constrained **Async play** stand-in rule above—never contradict a PENDING INBOUND, keep tone plausible and provisional, and leave room for the human to override next time they play.
+- If a negotiation must advance while the other seat is silent, follow the **MAGNITUDE RULE** above: you may improvise Tier-1 texture (tone, the fact of waiting, soft reads) provisionally, but you must NOT fabricate Tier-2 outcomes (material aid, treaties, war/peace, territory) on the silent player’s behalf — those wait for their own turn. Never contradict a PENDING INBOUND, scale the portrayed silence to how long it has been, keep THIS nation free to act unilaterally, and reconcile gracefully when the human’s real reply arrives.
 - Use bilateral threads (in state) for private negotiation; use this channel for how **this** nation experiences offers, snubs, and outcomes.
 
 ALLOW UNHINGED BEHAVIOR:
@@ -221,7 +237,7 @@ RULES (follow exactly):
 - Use append_turn_log for a short public summary; use privateByNationId for strings that should stay hidden from other nations' players (LAN mode).
 - If the latest player message contains "(orientationRequest: first opening beat — crisis choice deferred)", follow the **OPENING BEAT** instructions above (fifty-year brief, strengths/weaknesses, first event; **set_inflection** only when **povNationId** equals **activeNationId**), not this bullet’s older wording.
 
-${inboundSection}Current authoritative state:
+${inboundSection}${outstandingSection}Current authoritative state:
 ${stateJson}
 
 Respond with tool calls where needed, then the narrative outcome. Your visible prose should end with the next hook/question, and set_inflection should store that same hook internally for the next player turn. Be flavorful but concise, and end on a complete sentence.`;

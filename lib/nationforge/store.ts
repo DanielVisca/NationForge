@@ -9,11 +9,15 @@ import type {
   PublicGameSession,
   PublicInboundItem,
   PublicInteraction,
+  PublicOutboundItem,
   PublicSecret,
   PublicTurnLogEntry,
 } from "./public-types";
 import { STAT_KEYS } from "./schema";
-import { pendingInboundForNation } from "./interactions";
+import {
+  outstandingOutboundForNation,
+  pendingInboundForNation,
+} from "./interactions";
 import { forceStartFirstBeat, maybeStartFirstBeat } from "./forge-handlers";
 import { migrateSession } from "./session-migrate";
 import { isOpeningBriefWireMessage } from "./opening-brief-narrative";
@@ -552,6 +556,20 @@ export function filterSessionForClient(
       }))
     : [];
 
+  const outstandingOutbound: PublicOutboundItem[] = effectiveViewer
+    ? outstandingOutboundForNation(s, effectiveViewer).map((record) => ({
+        id: record.id,
+        at: record.at,
+        round: record.round,
+        toNationIds: record.toNationIds,
+        toNames: record.toNationIds.map(
+          (id) => nationNameById.get(id) ?? id,
+        ),
+        kind: record.kind,
+        summary: record.summary,
+      }))
+    : [];
+
   const {
     seatTokens,
     secrets: _sessionSecrets,
@@ -590,6 +608,7 @@ export function filterSessionForClient(
     emergentEvents,
     interactions,
     pendingInbound,
+    outstandingOutbound,
     viewerNationId: effectiveViewer,
   };
 }

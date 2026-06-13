@@ -69,6 +69,17 @@ export type PublicInboundItem = {
   detail?: string;
 };
 
+/** An overture the viewer nation SENT that a target has not yet acknowledged. */
+export type PublicOutboundItem = {
+  id: string;
+  at: string;
+  round: number;
+  toNationIds: string[];
+  toNames: string[];
+  kind: InteractionKind;
+  summary: string;
+};
+
 export type PublicGameSession = Omit<
   GameSession,
   | "secrets"
@@ -94,5 +105,7 @@ export type PublicGameSession = Omit<
   interactions: PublicInteraction[];
   /** Interactions still awaiting the viewer nation's response; [] for spectators. */
   pendingInbound: PublicInboundItem[];
+  /** Overtures the viewer nation sent that a target hasn't acknowledged yet; [] for spectators. */
+  outstandingOutbound: PublicOutboundItem[];
   viewerNationId: string | null;
 };
