@@ -5,6 +5,7 @@ import { generateText } from "ai";
 
 import type { Nation, StatKey } from "./schema";
 import {
+  MAX_REALLOC_POINTS_PER_TURN,
   MAX_STAT_IMPACTS_STORED,
   MAX_TRAJECTORY_LENGTH,
   STAT_KEYS,
@@ -56,10 +57,15 @@ export async function runStatAdjudication(opts: {
 
     const { deltas, reserveDelta, trajectory } = parsed;
 
-    // Budget guard: never apply an over-budget move — drop the numbers to a
-    // no-op (but still allow a trajectory-only update below).
-    let applyDeltas: StatDeltas = deltas;
-    let applyReserveDelta = reserveDelta;
+    // Budget guard: eventful beats naturally propose more than the L1 cap.
+    // Instead of dropping the whole move to a no-op (which froze stats on
+    // exactly the interesting beats), trim it down to fit while preserving
+    // direction, then defensively verify it passes the shared budget check.
+    let { deltas: applyDeltas, reserveDelta: applyReserveDelta } = fitToBudget(
+      deltas,
+      reserveDelta,
+      MAX_REALLOC_POINTS_PER_TURN,
+    );
     if (!validateReallocBudget(applyDeltas, applyReserveDelta).ok) {
       applyDeltas = {};
       applyReserveDelta = 0;
@@ -121,6 +127,54 @@ export async function runStatAdjudication(opts: {
   }
 }
 
+const RESERVE_KEY = "__reserve__";
+
+/**
+ * Trim a proposed move so the L1 budget (sum of |stat deltas| + |reserveDelta|)
+ * fits within `cap`, preserving direction. Repeatedly shrinks the
+ * largest-magnitude component by 1 — so the biggest intended swings survive and
+ * small ones drop out first. Integer-only; guaranteed L1 <= cap on return.
+ */
+export function fitToBudget(
+  deltas: StatDeltas,
+  reserveDelta: number,
+  cap: number,
+): { deltas: StatDeltas; reserveDelta: number } {
+  const comp = new Map<string, number>();
+  for (const k of STAT_KEYS) {
+    const v = Math.trunc(deltas[k] ?? 0);
+    if (v !== 0) comp.set(k, v);
+  }
+  const r = Math.trunc(reserveDelta);
+  if (r !== 0) comp.set(RESERVE_KEY, r);
+
+  const l1 = () => [...comp.values()].reduce((a, v) => a + Math.abs(v), 0);
+
+  let guard = 1000;
+  while (l1() > cap && guard-- > 0) {
+    let key: string | null = null;
+    let best = 0;
+    for (const [k, v] of comp) {
+      if (Math.abs(v) > best) {
+        best = Math.abs(v);
+        key = k;
+      }
+    }
+    if (!key) break;
+    const v = comp.get(key)!;
+    const nv = v - Math.sign(v);
+    if (nv === 0) comp.delete(key);
+    else comp.set(key, nv);
+  }
+
+  const outDeltas: StatDeltas = {};
+  for (const k of STAT_KEYS) {
+    const v = comp.get(k);
+    if (v) outDeltas[k] = v;
+  }
+  return { deltas: outDeltas, reserveDelta: comp.get(RESERVE_KEY) ?? 0 };
+}
+
 type AdjudicationResult = {
   deltas: StatDeltas;
   reserveDelta: number;
@@ -141,11 +195,13 @@ async function requestAdjudication(args: {
 
 Rules:
 - The six Key Stats are prosperity, stability, freedom, power, happiness, innovation. Each is 0–100. Reserve is >= 0.
-- Deltas are small signed integers; ±1 to ±4 is typical. A delta of 0 means no change.
-- The sum of the absolute values of all stat deltas plus the absolute value of reserveDelta MUST be <= 10.
-- "No change" (every delta 0) is valid and common for pure deliberation, dialogue, or planning beats. Do not invent movement.
+- Move only the few stats the beat actually touches — at most 2–3 stats in a single beat. Leave the rest at 0.
+- Deltas are small signed integers; ±1 to ±3 each. Even a dramatic beat is a nudge, not a leap.
+- HARD LIMIT: the sum of the absolute values of all stat deltas plus the absolute value of reserveDelta MUST be <= 10. Stay safely under it; do not spread movement across all six stats.
+- "No change" (every delta 0) is valid ONLY for pure deliberation, dialogue, or planning beats where nothing concrete happens. Do not invent movement on those.
+- BUT a clearly consequential, concrete beat — disaster, war, plague, famine, economic shock, major breakthrough, treasury spent, territory or population gained or lost — MUST register: move at least one stat and/or reserve in the fiction's direction. Do not return all-zero for a beat where something materially happened.
 - On quiet beats, gentle drift toward the nation's implied trajectory is allowed.
-- Reflect THIS beat plus the nation's ongoing trajectory.
+- Reflect THIS beat plus the nation's ongoing trajectory; pick the stats whose direction the fiction most clearly justifies.
 - Respond with ONLY a single-line minified JSON object — no prose, no markdown, no code fences.`;
 
   const prompt = `Nation current Key Stats: ${statsLine}
