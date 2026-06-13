@@ -1086,6 +1086,13 @@ export default function NationForgeBoard() {
     }).length;
   }, [sortedDiplomacy, session?.viewerNationId, replyDraftById]);
 
+  // Other nations that have acted toward the viewer's nation and await a
+  // response. Empty for spectators (no viewer nation) per the session payload.
+  const pendingInbound = useMemo(() => {
+    if (!session?.viewerNationId) return [];
+    return session.pendingInbound ?? [];
+  }, [session?.viewerNationId, session?.pendingInbound]);
+
   useEffect(() => {
     if (!otherNations.length) return;
     if (!diplomacyToId || !otherNations.some((n) => n.id === diplomacyToId)) {
@@ -1918,6 +1925,27 @@ export default function NationForgeBoard() {
                   : "The latest GM message spans multiple seats — each nation answers from their own chat POV."}
               </p>
             </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {session.viewerNationId && pendingInbound.length > 0 ? (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50/90 px-4 py-3 text-sm text-indigo-950 shadow-sm dark:border-indigo-900/45 dark:bg-indigo-950/35 dark:text-indigo-50">
+          <p className="font-semibold">
+            📨 {pendingInbound.length} incoming overture
+            {pendingInbound.length === 1 ? "" : "s"} awaiting your word
+          </p>
+          <ul className="mt-1.5 space-y-1 text-xs text-indigo-900/90 dark:text-indigo-100/85">
+            {pendingInbound.slice(0, 4).map((item) => (
+              <li key={item.id}>
+                <span className="font-medium">{item.fromName}</span> — {item.summary}
+              </li>
+            ))}
+          </ul>
+          {pendingInbound.length > 4 ? (
+            <p className="mt-1 text-[11px] text-indigo-800/80 dark:text-indigo-200/75">
+              +{pendingInbound.length - 4} more
+            </p>
           ) : null}
         </div>
       ) : null}

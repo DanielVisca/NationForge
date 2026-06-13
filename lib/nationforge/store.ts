@@ -7,10 +7,13 @@ import type { GameSession, Nation, NationStats } from "./schema";
 import type {
   PublicEmergentEvent,
   PublicGameSession,
+  PublicInboundItem,
+  PublicInteraction,
   PublicSecret,
   PublicTurnLogEntry,
 } from "./public-types";
 import { STAT_KEYS } from "./schema";
+import { pendingInboundForNation } from "./interactions";
 import { forceStartFirstBeat, maybeStartFirstBeat } from "./forge-handlers";
 import { migrateSession } from "./session-migrate";
 import { isOpeningBriefWireMessage } from "./opening-brief-narrative";
@@ -507,6 +510,48 @@ export function filterSessionForClient(
       ? s.gmMessagesByNationId[effectiveViewer]!
       : [];
 
+  // Privacy boundary for the cross-nation ledger: a record reaches a client only
+  // if it is public, or it is directed and the viewer is the sender or a target.
+  // The per-target `detailByNation` map is dropped; only the viewer's own entry
+  // (if any) is exposed via `detail`.
+  const interactions: PublicInteraction[] = (s.interactions ?? [])
+    .filter(
+      (record) =>
+        record.visibility === "public" ||
+        (Boolean(effectiveViewer) &&
+          (record.fromNationId === effectiveViewer ||
+            record.toNationIds.includes(effectiveViewer!))),
+    )
+    .map((record) => ({
+      id: record.id,
+      at: record.at,
+      round: record.round,
+      fromNationId: record.fromNationId,
+      toNationIds: record.toNationIds,
+      kind: record.kind,
+      summary: record.summary,
+      visibility: record.visibility,
+      status: record.status,
+      detail: effectiveViewer
+        ? record.detailByNation?.[effectiveViewer]
+        : undefined,
+    }));
+
+  const nationNameById = new Map(s.nations.map((n) => [n.id, n.name]));
+  const pendingInbound: PublicInboundItem[] = effectiveViewer
+    ? pendingInboundForNation(s, effectiveViewer).map((record) => ({
+        id: record.id,
+        at: record.at,
+        round: record.round,
+        fromNationId: record.fromNationId,
+        fromName:
+          nationNameById.get(record.fromNationId) ?? record.fromNationId,
+        kind: record.kind,
+        summary: record.summary,
+        detail: record.detailByNation?.[effectiveViewer],
+      }))
+    : [];
+
   const {
     seatTokens,
     secrets: _sessionSecrets,
@@ -518,6 +563,8 @@ export function filterSessionForClient(
     lastGmResponseIdByNationId: _lastGmBy,
     gmMessages: _gmLegacy,
     lastGmResponseId: _lastGmLegacy,
+    interactions: _interactionsRaw,
+    trajectoryByNation: _trajectoryRaw,
     ...rest
   } = s;
   void seatTokens;
@@ -530,6 +577,8 @@ export function filterSessionForClient(
   void _lastGmBy;
   void _gmLegacy;
   void _lastGmLegacy;
+  void _interactionsRaw;
+  void _trajectoryRaw;
   return {
     ...rest,
     nations,
@@ -539,6 +588,8 @@ export function filterSessionForClient(
     gmMessages: sanitizeGmMessagesForClient(viewerThread),
     diplomaticOutreach,
     emergentEvents,
+    interactions,
+    pendingInbound,
     viewerNationId: effectiveViewer,
   };
 }
