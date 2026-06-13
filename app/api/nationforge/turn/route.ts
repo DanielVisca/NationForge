@@ -30,6 +30,7 @@ import { filterModelMessagesWithXaiInputContent } from "@/lib/nationforge/model-
 import { getNationGmMessages } from "@/lib/nationforge/gm-threads";
 import { sliceFromLastUser } from "@/lib/nationforge/slice-messages";
 import { acknowledgeInbound } from "@/lib/nationforge/interactions";
+import { runInteractionExtraction } from "@/lib/nationforge/interaction-extractor";
 import type { GameSession } from "@/lib/nationforge/schema";
 import {
   getGameSession,
@@ -507,6 +508,26 @@ export async function POST(req: Request) {
             });
           } catch (e) {
             console.error("[nationforge/turn] inbound ack failed", e);
+          }
+
+          // Server-derived cross-nation interaction extraction. The fast GM
+          // model rarely calls signal_nation, so directed actions in the prose
+          // ("we send envoys to Beta requesting aid") never reach the ledger
+          // and the target seat never learns of them. This best-effort pass
+          // reads the player's move + the GM beat prose and writes directed
+          // ledger records via its OWN locked updateGameSession (deduped
+          // against signal_nation having already fired). Isolated in its own
+          // try/catch so a failure here can NEVER reach the outer catch (which
+          // would wrongly trigger rollback).
+          try {
+            await runInteractionExtraction({
+              sessionId: body.sessionId,
+              povNationId: pov,
+              playerProse: body.narrative ?? "",
+              beatProse: lastAssistantTextProseFromMessages(finalMessages),
+            });
+          } catch (e) {
+            console.error("[nationforge/turn] interaction extraction failed", e);
           }
         } catch (e) {
           console.error("[nationforge/turn] onFinish error", e);
