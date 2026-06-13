@@ -168,6 +168,27 @@ function appendAssistantProse(messages: UIMessage[], addition: string): UIMessag
   ];
 }
 
+function normalizeForDedupe(s: string): string {
+  return s.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * Guard against the continuation model re-emitting text it was told to continue.
+ * The model is instructed not to repeat earlier prose, but a fast model sometimes
+ * restates the whole beat — and the loop's length-growth check would happily keep
+ * the duplicate. Drop additions that duplicate (or wholly re-emit) what we have.
+ */
+function dedupeContinuationAddition(existingProse: string, addition: string): string {
+  const add = addition.trim();
+  if (!add) return "";
+  const ne = normalizeForDedupe(existingProse);
+  const na = normalizeForDedupe(add);
+  if (!na) return "";
+  if (ne.includes(na)) return ""; // continuation duplicates text we already have
+  if (na.includes(ne) && ne.length > 40) return ""; // continuation re-emitted the whole beat
+  return add;
+}
+
 async function completeCutOffGmProseOnce(options: {
   sessionId: string;
   povNationId: string;
@@ -190,7 +211,8 @@ Cut-off GM prose:
 ${prose}`,
     });
 
-    return appendAssistantProse(options.messages, continuation.text);
+    const addition = dedupeContinuationAddition(prose, continuation.text);
+    return appendAssistantProse(options.messages, addition);
   } catch {
     return options.messages;
   }
