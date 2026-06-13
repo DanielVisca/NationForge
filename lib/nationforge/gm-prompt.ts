@@ -100,14 +100,27 @@ export function buildGmSystemPrompt(
       povNationName: nameById.get(povNationId) ?? povNationId,
       roundIndex: session.roundIndex,
       activeNationId: session.activeNationId,
-      nations: session.nations.map((n) => ({
-        id: n.id,
-        name: n.name,
-        buildNotes: n.buildNotes,
-        governanceNotes: clipGovernance(n.domesticScratch ?? ""),
-        stats: n.stats,
-        reserve: n.reserve,
-      })),
+      // Full build/governance detail only for the pov nation; other nations'
+      // summaries already ride in neighborPeers (buildSummary), so we keep the
+      // per-nation prompt cost ~flat as the table grows instead of O(N) full
+      // notes for every seat.
+      nations: session.nations.map((n) =>
+        n.id === povNationId
+          ? {
+              id: n.id,
+              name: n.name,
+              buildNotes: n.buildNotes,
+              governanceNotes: clipGovernance(n.domesticScratch ?? ""),
+              stats: n.stats,
+              reserve: n.reserve,
+            }
+          : {
+              id: n.id,
+              name: n.name,
+              stats: n.stats,
+              reserve: n.reserve,
+            },
+      ),
       neighborPeers,
       recentPublicBeats,
       tableEvents,
