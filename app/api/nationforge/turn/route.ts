@@ -29,12 +29,14 @@ import {
 import { filterModelMessagesWithXaiInputContent } from "@/lib/nationforge/model-message-content";
 import { getNationGmMessages } from "@/lib/nationforge/gm-threads";
 import { sliceFromLastUser } from "@/lib/nationforge/slice-messages";
+import { acknowledgeInbound } from "@/lib/nationforge/interactions";
 import type { GameSession } from "@/lib/nationforge/schema";
 import {
   getGameSession,
   mutateSessionExclusive,
   replaceNationGmMessages,
   saveGameSession,
+  updateGameSession,
 } from "@/lib/nationforge/store";
 import { defaultModelId, requireXaiApiKey, xai } from "@/lib/xai";
 
@@ -490,6 +492,21 @@ export async function POST(req: Request) {
               "[nationforge/turn] stat adjudication error (ignored)",
               adjErr,
             );
+          }
+
+          // Server-derived inbound acknowledgement. After pov's beat completes,
+          // flip every pending inbound interaction targeting pov to
+          // acknowledged (and on to "acknowledged" once all targets have). We
+          // do not trust the model to call a tool for this. Runs as its OWN
+          // locked updateGameSession so it does not clobber concurrent writes,
+          // and is isolated in its own try/catch so a failure here can NEVER
+          // reach the outer catch (which would wrongly trigger rollback).
+          try {
+            await updateGameSession(body.sessionId, (s) => {
+              s.interactions = acknowledgeInbound(s.interactions, pov);
+            });
+          } catch (e) {
+            console.error("[nationforge/turn] inbound ack failed", e);
           }
         } catch (e) {
           console.error("[nationforge/turn] onFinish error", e);

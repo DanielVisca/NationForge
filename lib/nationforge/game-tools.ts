@@ -12,6 +12,7 @@ import {
   validateReallocBudget,
 } from "./validation";
 import { updateGameSession } from "./store";
+import { makeInteraction, pushInteractionCapped } from "./interactions";
 
 const statDeltaSchema = z
   .object({
@@ -300,6 +301,87 @@ export function createNationForgeTools(
     },
   });
 
+  const signal_nation = tool({
+    description:
+      "Record that THIS nation has acted toward one or more OTHER seats (an offer, threat, aid, envoy, trade proposal, intel, or military move) so the target nation's player learns of it on their turn. Call this whenever your narration has this nation reach out to, pressure, or affect another player nation. The summary is read by the other nation's GM.",
+    inputSchema: z.object({
+      toNationIds: z
+        .array(z.string())
+        .min(1)
+        .describe("Target nation ids (the actor is the current pov)"),
+      kind: z.enum([
+        "diplomacy",
+        "aid",
+        "trade",
+        "threat",
+        "military",
+        "covert",
+        "info",
+        "other",
+      ]),
+      summary: z
+        .string()
+        .describe(
+          "Short third-person description of what this nation did toward them (what the target should learn)",
+        ),
+      detailByNation: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe("Optional per-target private framing (map targetNationId -> text)"),
+      visibility: z.enum(["directed", "public"]).default("directed"),
+    }),
+    execute: async ({ toNationIds, kind, summary, detailByNation, visibility }) => {
+      let interactionId: string | null = null;
+      let dropped: string[] = [];
+      let failReason: string | null = null;
+      const updated = await updateGameSession(sessionId, (s) => {
+        const validIds = new Set(s.nations.map((n) => n.id));
+        dropped = toNationIds.filter(
+          (id) => !validIds.has(id) || id === toolPovNationId,
+        );
+        const valid = toNationIds.filter(
+          (id) => validIds.has(id) && id !== toolPovNationId,
+        );
+        if (valid.length === 0) {
+          failReason = "No valid target nation ids";
+          return;
+        }
+
+        const filteredDetail = detailByNation
+          ? Object.fromEntries(
+              Object.entries(detailByNation).filter(([id]) => valid.includes(id)),
+            )
+          : undefined;
+
+        const record = makeInteraction({
+          fromNationId: toolPovNationId,
+          toNationIds: valid,
+          kind,
+          summary,
+          round: s.roundIndex,
+          origin: "gm_narration",
+          visibility,
+          detailByNation: filteredDetail,
+        });
+        s.interactions = pushInteractionCapped(s.interactions, record);
+        interactionId = record.id;
+      });
+      if (!updated) return { ok: false as const, error: "Session not found" };
+      if (failReason) {
+        return {
+          ok: false as const,
+          error: failReason,
+          droppedUnknownNationIds: dropped,
+        };
+      }
+      return {
+        ok: true as const,
+        interactionId,
+        droppedUnknownNationIds: dropped.length ? dropped : undefined,
+      };
+    },
+  });
+
   return {
     apply_stat_deltas,
     no_stat_change_this_turn,
@@ -307,5 +389,6 @@ export function createNationForgeTools(
     set_inflection,
     declare_emergent_event,
     register_secret,
+    signal_nation,
   };
 }
