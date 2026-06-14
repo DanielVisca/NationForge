@@ -247,6 +247,9 @@ async function completeCutOffGmProseLoop(options: {
 }
 
 export async function POST(req: Request) {
+  // Captured before any work so the interaction extractor can scope its dedupe
+  // to records created during THIS beat (signal_nation / re-run), not prior ones.
+  const turnStartedAt = new Date().toISOString();
   try {
     requireXaiApiKey();
   } catch (e) {
@@ -547,6 +550,7 @@ export async function POST(req: Request) {
               povNationId: pov,
               playerProse: body.narrative ?? "",
               beatProse: lastAssistantTextProseFromMessages(finalMessages),
+              sinceAt: turnStartedAt,
             });
           } catch (e) {
             console.error("[nationforge/turn] interaction extraction failed", e);

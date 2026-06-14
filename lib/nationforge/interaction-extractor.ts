@@ -27,6 +27,10 @@ export async function runInteractionExtraction(opts: {
   povNationId: string;
   playerProse: string;
   beatProse: string;
+  /** ISO timestamp captured when this turn began; dedupe is scoped to records
+   *  created during THIS beat (signal_nation / a re-run), so a genuinely new
+   *  overture in a later beat to the same nation is still recorded. */
+  sinceAt: string;
 }): Promise<void> {
   try {
     const flag =
@@ -68,19 +72,18 @@ export async function runInteractionExtraction(opts: {
     }
     if (resolved.length === 0) return;
 
-    // Dedupe against the EXISTING ledger: skip items the signal_nation tool
-    // (or a prior run of this pass) already recorded. Use a 1-round window
-    // because set_inflection increments roundIndex mid-turn, so a signal_nation
-    // record from earlier in the same beat sits one round behind this pass.
-    const round = session.roundIndex;
-    const existsThisRound = (targetId: string): boolean =>
+    // Dedupe ONLY against records created during THIS beat (the signal_nation
+    // tool or a re-run of this pass), identified by timestamp >= the turn start.
+    // A round-window check wrongly swallowed a genuinely new overture in a later
+    // beat to the same nation; scoping to this beat fixes that.
+    const existsThisBeat = (targetId: string): boolean =>
       (session.interactions ?? []).some(
         (i) =>
-          i.round >= round - 1 &&
+          i.at >= opts.sinceAt &&
           i.fromNationId === opts.povNationId &&
           i.toNationIds.includes(targetId),
       );
-    const fresh = resolved.filter((r) => !existsThisRound(r.targetId));
+    const fresh = resolved.filter((r) => !existsThisBeat(r.targetId));
     if (fresh.length === 0) return;
 
     await updateGameSession(opts.sessionId, (s) => {
@@ -89,7 +92,7 @@ export async function runInteractionExtraction(opts: {
         // concurrent signal_nation / re-run cannot create duplicates.
         const dup = s.interactions.some(
           (i) =>
-            i.round >= s.roundIndex - 1 &&
+            i.at >= opts.sinceAt &&
             i.fromNationId === opts.povNationId &&
             i.toNationIds.includes(r.targetId),
         );
